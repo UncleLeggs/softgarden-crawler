@@ -186,7 +186,7 @@ Needs **Node ≥ 22.5** (for `node:sqlite`). No `npm install` for the default SQ
 are no required dependencies.
 
 ```bash
-git clone <this repo> && cd softgarden-crawler
+git clone https://github.com/UncleLeggs/softgarden-crawler.git && cd softgarden-crawler
 cp .env.example .env          # optional; every value has a default
 npm test
 npm run discover              # ~2 min, downloads and caches a ~100 MB index file

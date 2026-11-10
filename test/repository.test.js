@@ -162,3 +162,37 @@ test('stats shapes the numbers the dashboard reads', async () => {
   assert.equal(s.countries.length, 2);
   await store.close();
 });
+
+/**
+ * `stats()` is the one object two different front ends destructure: the CLI
+ * printer and the dashboard's /api/summary. A renamed key there is invisible to
+ * the unit tests above but crashes both at runtime, so pin the shape itself.
+ */
+test('stats returns every key its consumers read, including recentAlerts', async () => {
+  const store = await freshStore();
+  await upsertTenant(store, tenant, 'career.softgarden.de');
+  const s = await stats(store);
+  for (const key of ['tenants', 'tenantsLive', 'brandedDomains', 'byPlatform', 'jobsOpen',
+    'jobsClosed', 'withDescription', 'remote', 'countries', 'topTenants', 'lastRuns',
+    'recentAlerts']) {
+    assert.ok(key in s, `stats() must expose "${key}"`);
+  }
+  for (const key of ['byPlatform', 'countries', 'topTenants', 'lastRuns', 'recentAlerts']) {
+    assert.ok(Array.isArray(s[key]), `stats().${key} must be an array, not ${typeof s[key]}`);
+  }
+  await store.close();
+});
+
+test('an alert raised by detectDrops shows up in stats().recentAlerts', async () => {
+  const store = await freshStore();
+  await upsertTenant(store, tenant, 'career.softgarden.de');
+  const r1 = await startRun(store, 'crawl');
+  await snapshot(store, r1, 'acme', 100);
+  const r2 = await startRun(store, 'crawl');
+  await snapshot(store, r2, 'acme', 10);
+  await detectDrops(store, r2, 0.3);
+  const s = await stats(store);
+  assert.equal(s.recentAlerts.length, 1);
+  assert.equal(s.recentAlerts[0].kind, 'job_count_drop');
+  await store.close();
+});

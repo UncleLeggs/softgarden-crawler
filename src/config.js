@@ -20,7 +20,7 @@ export const config = {
 
   // Common Crawl asks for a descriptive agent. Career sites serve different
   // markup to non-browser agents, so those requests need a browser UA.
-  scriptUA: env.SG_USER_AGENT || 'softgarden-crawler/1.0 (+https://github.com/example/softgarden-crawler)',
+  scriptUA: env.SG_USER_AGENT || 'softgarden-crawler/1.0 (+https://github.com/UncleLeggs/softgarden-crawler)',
   browserUA: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36',
 
   dataHost: 'https://data.commoncrawl.org',

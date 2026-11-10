@@ -12,8 +12,8 @@ jobs:
       matrix:
         node: ['22.x', '24.x']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
       - name: Syntax check
@@ -26,10 +26,24 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      # The unit tests exercise the repository directly, so they cannot catch a
+      # key the CLI reads under a different name than stats() returns. Running
+      # each read-only command against an empty database does, and needs no network.
+      - name: CLI smoke (no network)
+        env:
+          SG_DB: ${{ runner.temp }}/smoke.db
+        run: |
+          set -euo pipefail
+          npm run --silent stats
+          npm run --silent alerts
+          node --disable-warning=ExperimentalWarning src/cli.js export --what tenants --out "$RUNNER_TEMP/t.csv"
+          node --disable-warning=ExperimentalWarning src/cli.js export --what jobs --out "$RUNNER_TEMP/j.csv"
+          node --disable-warning=ExperimentalWarning src/cli.js export --what jobs --format ndjson --out "$RUNNER_TEMP/j.ndjson"
+
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build image
         run: docker build -t softgarden-crawler:ci .
       - name: Run tests inside the image

@@ -19,16 +19,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 330
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.x'
 
       # The database is the state that must survive between runs, so that
       # change detection and drop alerts have something to compare against.
       - name: Restore database
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: data
           key: softgarden-db-${{ github.run_id }}
@@ -37,7 +37,7 @@ jobs:
       # cluster.idx is ~100 MB per snapshot; caching it avoids re-downloading
       # and keeps us well clear of Common Crawl's WAF.
       - name: Restore Common Crawl index cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .cc-cache
           key: cc-index-${{ github.run_id }}
@@ -65,7 +65,7 @@ jobs:
 
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: crawl-output
           path: |
@@ -73,11 +73,14 @@ jobs:
             data/softgarden.db
           retention-days: 30
 
-      - name: Fail the run if alerts fired
+      # Goes through the CLI rather than touching the database directly, so this
+      # works on whichever backend SG_DB_URL selects.
+      - name: Warn if drop alerts fired
         if: always()
         run: |
-          COUNT=$(node --disable-warning=ExperimentalWarning -e "import('./src/db.js').then(m=>{const d=m.openDb();console.log(d.prepare('SELECT COUNT(*) n FROM alerts WHERE created_at > datetime(\"now\",\"-1 day\")').get().n)})")
-          echo "alerts in the last day: $COUNT"
-          if [ "$COUNT" -gt 0 ]; then
+          OUT=$(npm run --silent alerts)
+          echo "$OUT"
+          COUNT=$(printf '%s\n' "$OUT" | grep -c 'job_count_drop' || true)
+          if [ "${COUNT:-0}" -gt 0 ]; then
             echo "::warning::$COUNT job-count drop alert(s) - check the stats output"
           fi

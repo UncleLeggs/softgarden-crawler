@@ -23,7 +23,7 @@ x-common: &common
     SG_CRON: ${SG_CRON:-17 3 * * 1}
     SG_DROP_THRESHOLD: ${SG_DROP_THRESHOLD:-0.3}
     SG_LOG_LEVEL: ${SG_LOG_LEVEL:-info}
-    SG_USER_AGENT: ${SG_USER_AGENT:-softgarden-crawler/1.0 (+https://github.com/example/softgarden-crawler)}
+    SG_USER_AGENT: ${SG_USER_AGENT:-softgarden-crawler/1.0 (+https://github.com/UncleLeggs/softgarden-crawler)}
   volumes:
     - sgdata:/data
     - ccindex:/cache

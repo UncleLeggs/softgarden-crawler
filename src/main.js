@@ -91,9 +91,9 @@ async function main() {
       for (const r of s.lastRuns) {
         console.log(`  #${r.id} ${r.mode.padEnd(14)} ${r.started_at} ok=${r.ok ?? '-'} seen=${r.jobs_seen} new=${r.jobs_new} closed=${r.jobs_closed} details=${r.details_ok}`);
       }
-      if (s.openAlerts.length) {
+      if (s.recentAlerts.length) {
         console.log('\nRecent alerts');
-        for (const a of s.openAlerts) console.log(`  ${a.created_at} ${a.tenant_slug} ${a.kind} ${a.detail}`);
+        for (const a of s.recentAlerts) console.log(`  ${a.created_at} ${a.tenant_slug} ${a.kind} ${a.detail}`);
       }
       console.log(`\nNext scheduled run: ${nextRun(config.cron).toISOString()} (SG_CRON="${config.cron}")\n`);
       await store.close();
@@ -102,7 +102,9 @@ async function main() {
     case 'alerts': {
       const store = await createStore();
       const rows = await store.all('SELECT * FROM alerts ORDER BY id DESC LIMIT 100');
-      if (!rows.length) { console.log('no alerts'); break; }
+      if (!rows.length) console.log('no alerts');
+      // Close on every path: the Postgres pool holds the event loop open, so an
+      // early `break` here would hang the process instead of exiting.
       for (const a of rows) console.log(`${a.created_at}  ${a.tenant_slug.padEnd(34)} ${a.kind.padEnd(16)} ${a.detail}`);
       await store.close();
       break;

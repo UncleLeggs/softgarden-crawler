@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Softgarden Crawler</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-0: #f6f6f4;
+    --surface-1: #fcfcfb;
+    --border:    #e3e2dd;
+    --grid:      #ebeae5;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #7a7975;
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --seq-400:  #3987e5;
+    --seq-450:  #2a78d6;
+    --seq-550:  #1c5cab;
+    --critical: #e34948;
+    --good:     #008300;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-0: #121211;
+      --surface-1: #1a1a19;
+      --border:    #2e2e2c;
+      --grid:      #272726;
+      --text-primary:   #f0efec;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #94938b;
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --series-3: #199e70;
+      --seq-400:  #3987e5;
+      --seq-450:  #2a78d6;
+      --seq-550:  #1c5cab;
+      --critical: #e66767;
+      --good:     #008300;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-0: #121211;
+    --surface-1: #1a1a19;
+    --border:    #2e2e2c;
+    --grid:      #272726;
+    --text-primary:   #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #94938b;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --critical: #e66767;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--surface-0); color: var(--text-primary);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 16px 64px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; justify-content: space-between; margin-bottom: 24px; }
+  h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--text-secondary); font-size: 13px; }
+  button {
+    font: inherit; font-size: 13px; color: var(--text-secondary); cursor: pointer;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 7px; padding: 5px 11px;
+  }
+  button:hover { color: var(--text-primary); }
+  button[aria-pressed="true"] { color: var(--text-primary); border-color: var(--text-muted); }
+  .controls { display: flex; gap: 8px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 11px; padding: 16px 18px;
+  }
+  .tile .label { color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .tile .value { font-size: 30px; font-weight: 640; letter-spacing: -0.02em; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .tile .foot { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 12px; }
+  .card h2 { font-size: 14px; font-weight: 620; margin: 0 0 2px; }
+  .card .hint { color: var(--text-muted); font-size: 12px; margin: 0 0 14px; }
+  .span-2 { grid-column: 1 / -1; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 0 0 10px; padding: 0; list-style: none; font-size: 12px; color: var(--text-secondary); }
+  .legend li { display: flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+  svg { display: block; width: 100%; overflow: visible; }
+  .grid-line { stroke: var(--grid); stroke-width: 1; }
+  .axis-text { fill: var(--text-muted); font-size: 11px; }
+  .bar-label { fill: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .cat-label { fill: var(--text-secondary); font-size: 12px; }
+  .hit { fill: transparent; cursor: default; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-secondary); font-weight: 580; font-size: 12px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr:last-child td { border-bottom: 0; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border); color: var(--text-secondary); }
+  .bad { color: var(--critical); }
+  .ok { color: var(--good); }
+  .empty { color: var(--text-muted); padding: 10px 0; }
+  [hidden] { display: none !important; }
+
+  #tooltip {
+    position: fixed; z-index: 10; pointer-events: none; opacity: 0;
+    transition: opacity .09s; background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
+    font-size: 12px; box-shadow: 0 6px 20px rgb(0 0 0 / 0.14); max-width: 280px;
+  }
+  #tooltip b { font-weight: 620; }
+  #tooltip .t-val { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Softgarden crawler</h1>
+      <div class="sub" id="meta">loading…</div>
+    </div>
+    <div class="controls">
+      <button id="toggle-table" aria-pressed="false">Table view</button>
+      <button id="toggle-theme">Theme</button>
+    </div>
+  </header>
+
+  <section class="tiles" id="tiles"></section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>Career-site generation</h2>
+      <p class="hint">Live tenants by front end. The legacy board dominates.</p>
+      <div id="platform-chart"></div>
+    </div>
+
+    <div class="card">
+      <h2>Open jobs by country</h2>
+      <p class="hint">Normalized to ISO-3166-1 alpha-2.</p>
+      <div id="country-chart"></div>
+    </div>
+
+    <div class="card span-2">
+      <h2>Top tenants by open jobs</h2>
+      <p class="hint">Largest customers in the database.</p>
+      <div id="tenant-chart"></div>
+    </div>
+
+    <div class="card span-2">
+      <h2>Crawl history</h2>
+      <p class="hint">Listings seen and new jobs per run, oldest run first.</p>
+      <ul class="legend" id="runs-legend"></ul>
+      <div id="runs-chart"></div>
+    </div>
+
+    <div class="card span-2">
+      <h2>Recent runs</h2>
+      <div id="runs-table"></div>
+    </div>
+
+    <div class="card span-2">
+      <h2>Alerts</h2>
+      <p class="hint">Sharp job-count drops — usually a crawl problem, not a customer closing roles.</p>
+      <div id="alerts-table"></div>
+    </div>
+  </section>
+</div>
+<div id="tooltip" role="status" aria-live="polite"></div>
+
+<script type="module">
+const SVG = 'http://www.w3.org/2000/svg';
+const el = (name, attrs = {}, parent) => {
+  const n = document.createElementNS(SVG, name);
+  for (const [k, v] of Object.entries(attrs)) if (v != null) n.setAttribute(k, v);
+  parent?.appendChild(n);
+  return n;
+};
+const fmt = (n) => Number(n).toLocaleString('en-US');
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const CSSVAR = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+/* ---- tooltip ---------------------------------------------------------- */
+const tip = document.getElementById('tooltip');
+function showTip(evt, html) {
+  tip.innerHTML = html;
+  tip.style.opacity = '1';
+  const r = tip.getBoundingClientRect();
+  let x = evt.clientX + 14;
+  let y = evt.clientY - r.height - 10;
+  if (x + r.width > innerWidth - 8) x = evt.clientX - r.width - 14;
+  if (y < 8) y = evt.clientY + 16;
+  tip.style.left = `${x}px`;
+  tip.style.top = `${y}px`;
+}
+const hideTip = () => { tip.style.opacity = '0'; };
+function hoverable(node, html) {
+  node.addEventListener('mousemove', (e) => showTip(e, html));
+  node.addEventListener('mouseleave', hideTip);
+}
+
+/* ---- horizontal bars: single series, sequential hue, direct labels ---- */
+function hBars(mount, rows, { color = 'var(--seq-450)', unit = 'jobs', labelWidth = 170 } = {}) {
+  mount.replaceChildren();
+  if (!rows.length) { mount.innerHTML = '<p class="empty">No data yet.</p>'; return; }
+  const rowH = 26, gap = 6, padR = 58;
+  const h = rows.length * (rowH + gap);
+  const width = mount.clientWidth || 640;
+  const plotW = Math.max(60, width - labelWidth - padR);
+  const max = Math.max(...rows.map((r) => r.value), 1);
+  const svg = el('svg', { viewBox: `0 0 ${width} ${h}`, height: h, role: 'img' }, mount);
+
+  rows.forEach((r, i) => {
+    const y = i * (rowH + gap);
+    const w = Math.max(2, (r.value / max) * plotW);
+    el('text', { x: labelWidth - 10, y: y + rowH / 2 + 4, 'text-anchor': 'end', class: 'cat-label' }, svg)
+      .textContent = r.label.length > 26 ? `${r.label.slice(0, 25)}…` : r.label;
+    // 4px rounded data-end, anchored flat to the baseline at x=labelWidth
+    const bar = el('path', {
+      d: `M${labelWidth},${y} h${w - 4} a4,4 0 0 1 4,4 v${rowH - 8} a4,4 0 0 1 -4,4 h${-(w - 4)} z`,
+      fill: r.color ?? color,
+    }, svg);
+    el('text', { x: labelWidth + w + 8, y: y + rowH / 2 + 4, class: 'bar-label' }, svg)
+      .textContent = fmt(r.value);
+    const hit = el('rect', { x: labelWidth, y, width: plotW, height: rowH, class: 'hit' }, svg);
+    hoverable(hit, `<b>${esc(r.tip ?? r.label)}</b><br><span class="t-val">${fmt(r.value)}</span> ${esc(unit)}`);
+    hoverable(bar, `<b>${esc(r.tip ?? r.label)}</b><br><span class="t-val">${fmt(r.value)}</span> ${esc(unit)}`);
+  });
+}
+
+/* ---- vertical bars: categorical identity, direct labels --------------- */
+function vBars(mount, rows, { unit = 'tenants' } = {}) {
+  mount.replaceChildren();
+  if (!rows.length) { mount.innerHTML = '<p class="empty">No data yet.</p>'; return; }
+  const width = mount.clientWidth || 420;
+  const h = 210, padB = 46, padT = 26;
+  const plotH = h - padB - padT;
+  const max = Math.max(...rows.map((r) => r.value), 1);
+  // 2px surface gap between adjacent bars
+  const slot = width / rows.length;
+  const barW = Math.min(76, slot - 14);
+  const svg = el('svg', { viewBox: `0 0 ${width} ${h}`, height: h, role: 'img' }, mount);
+
+  for (let g = 0; g <= 2; g++) {
+    const y = padT + (plotH * g) / 2;
+    el('line', { x1: 0, x2: width, y1: y, y2: y, class: 'grid-line' }, svg);
+  }
+  rows.forEach((r, i) => {
+    const x = i * slot + (slot - barW) / 2;
+    const bh = Math.max(3, (r.value / max) * plotH);
+    const y = padT + plotH - bh;
+    const bar = el('path', {
+      d: `M${x},${padT + plotH} v${-(bh - 4)} a4,4 0 0 1 4,-4 h${barW - 8} a4,4 0 0 1 4,4 v${bh - 4} z`,
+      fill: r.color,
+    }, svg);
+    el('text', { x: x + barW / 2, y: y - 7, 'text-anchor': 'middle', class: 'bar-label' }, svg)
+      .textContent = fmt(r.value);
+    const lbl = el('text', { x: x + barW / 2, y: padT + plotH + 17, 'text-anchor': 'middle', class: 'cat-label' }, svg);
+    lbl.textContent = r.label;
+    if (r.sub) {
+      el('text', { x: x + barW / 2, y: padT + plotH + 32, 'text-anchor': 'middle', class: 'axis-text' }, svg)
+        .textContent = r.sub;
+    }
+    hoverable(bar, `<b>${esc(r.label)}</b><br><span class="t-val">${fmt(r.value)}</span> ${esc(unit)}`);
+  });
+}
+
+/* ---- lines: 2 series, legend + crosshair ------------------------------ */
+function lineChart(mount, points, series) {
+  mount.replaceChildren();
+  if (points.length < 1) { mount.innerHTML = '<p class="empty">No runs recorded yet.</p>'; return; }
+  const width = mount.clientWidth || 720;
+  const h = 240, padL = 48, padR = 16, padT = 16, padB = 34;
+  const plotW = Math.max(40, width - padL - padR);
+  const plotH = h - padT - padB;
+  const max = Math.max(1, ...points.flatMap((p) => series.map((s) => p[s.key])));
+  const x = (i) => padL + (points.length === 1 ? plotW / 2 : (i / (points.length - 1)) * plotW);
+  const y = (v) => padT + plotH - (v / max) * plotH;
+  const svg = el('svg', { viewBox: `0 0 ${width} ${h}`, height: h, role: 'img' }, mount);
+
+  for (let g = 0; g <= 3; g++) {
+    const gy = padT + (plotH * g) / 3;
+    el('line', { x1: padL, x2: width - padR, y1: gy, y2: gy, class: 'grid-line' }, svg);
+    el('text', { x: padL - 9, y: gy + 4, 'text-anchor': 'end', class: 'axis-text' }, svg)
+      .textContent = fmt(Math.round(max * (1 - g / 3)));
+  }
+  points.forEach((p, i) => {
+    el('text', { x: x(i), y: h - 12, 'text-anchor': 'middle', class: 'axis-text' }, svg)
+      .textContent = `#${p.id}`;
+  });
+
+  const crosshair = el('line', { y1: padT, y2: padT + plotH, class: 'grid-line', stroke: 'var(--text-muted)', opacity: 0 }, svg);
+
+  for (const s of series) {
+    const d = points.map((p, i) => `${i ? 'L' : 'M'}${x(i)},${y(p[s.key])}`).join(' ');
+    el('path', { d, fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+    points.forEach((p, i) => {
+      // 2px surface ring so overlapping markers stay separable
+      el('circle', { cx: x(i), cy: y(p[s.key]), r: 4.5, fill: s.color, stroke: 'var(--surface-1)', 'stroke-width': 2 }, svg);
+    });
+    // direct label on the final point (<=4 series, so labels not legend-only)
+    const last = points.length - 1;
+    el('text', { x: x(last) + 8, y: y(points[last][s.key]) + 4, class: 'bar-label', fill: 'var(--text-secondary)' }, svg)
+      .textContent = fmt(points[last][s.key]);
+  }
+
+  const hit = el('rect', { x: padL, y: padT, width: plotW, height: plotH, class: 'hit' }, svg);
+  hit.addEventListener('mousemove', (e) => {
+    const box = svg.getBoundingClientRect();
+    const rel = ((e.clientX - box.left) / box.width) * width;
+    let nearest = 0, best = Infinity;
+    points.forEach((_, i) => { const d = Math.abs(x(i) - rel); if (d < best) { best = d; nearest = i; } });
+    const p = points[nearest];
+    crosshair.setAttribute('x1', x(nearest));
+    crosshair.setAttribute('x2', x(nearest));
+    crosshair.setAttribute('opacity', 0.5);
+    showTip(e, `<b>Run #${p.id}</b> · ${esc(p.mode)}<br>`
+      + series.map((s) => `${esc(s.name)}: <span class="t-val">${fmt(p[s.key])}</span>`).join('<br>'));
+  });
+  hit.addEventListener('mouseleave', () => { crosshair.setAttribute('opacity', 0); hideTip(); });
+}
+
+/* ---- tables ----------------------------------------------------------- */
+function table(mount, cols, rows, emptyMsg) {
+  if (!rows.length) { mount.innerHTML = `<p class="empty">${esc(emptyMsg)}</p>`; return; }
+  mount.innerHTML = `<table><thead><tr>${
+    cols.map((c) => `<th class="${c.num ? 'num' : ''}">${esc(c.label)}</th>`).join('')
+  }</tr></thead><tbody>${
+    rows.map((r) => `<tr>${cols.map((c) => `<td class="${c.num ? 'num' : ''}${c.cls ? ` ${c.cls(r)}` : ''}">${c.render(r)}</td>`).join('')}</tr>`).join('')
+  }</tbody></table>`;
+}
+
+/* ---- render ----------------------------------------------------------- */
+let DATA = null;
+
+function tiles(d) {
+  const pct = d.kpis.jobsOpen ? Math.round((d.kpis.withDescription / d.kpis.jobsOpen) * 100) : 0;
+  const items = [
+    { label: 'Live tenants', value: d.kpis.tenantsLive, foot: `${fmt(d.kpis.tenantsKnown)} discovered` },
+    { label: 'Open jobs', value: d.kpis.jobsOpen, foot: `${fmt(d.kpis.jobsClosed)} closed` },
+    { label: 'With descriptions', value: d.kpis.withDescription, foot: `${pct}% of open jobs` },
+    { label: 'Branded domains', value: d.kpis.brandedDomains, foot: 'own domain via redirect' },
+  ];
+  document.getElementById('tiles').innerHTML = items.map((i) => `
+    <div class="card tile">
+      <div class="label">${esc(i.label)}</div>
+      <div class="value">${fmt(i.value)}</div>
+      <div class="foot">${esc(i.foot)}</div>
+    </div>`).join('');
+}
+
+const PLATFORM_LABEL = { 'career-next': 'Next.js', 'career-embedded': 'Server-rendered', board: 'Legacy board' };
+
+function renderCharts(d) {
+  const cat = [CSSVAR('--series-1'), CSSVAR('--series-2'), CSSVAR('--series-3')];
+  // Fixed hue order by entity, never by rank: sort to a stable platform order.
+  const order = ['career-next', 'career-embedded', 'board'];
+  const platforms = order
+    .map((key, i) => {
+      const found = d.platforms.find((p) => p.platform === key);
+      return found ? { label: PLATFORM_LABEL[key], sub: key, value: found.count, color: cat[i] } : null;
+    })
+    .filter(Boolean);
+  vBars(document.getElementById('platform-chart'), platforms, { unit: 'live tenants' });
+
+  hBars(document.getElementById('country-chart'),
+    d.countries.map((c) => ({ label: c.country, value: c.jobs })),
+    { labelWidth: 54 });
+
+  hBars(document.getElementById('tenant-chart'),
+    d.topTenants.map((t) => ({
+      label: t.company || t.slug, value: t.jobs,
+      tip: `${t.company || t.slug}${t.company ? ` · ${t.slug}` : ''} · ${PLATFORM_LABEL[t.platform] ?? t.platform}`,
+    })),
+    { labelWidth: 210 });
+
+  const series = [
+    { key: 'jobsSeen', name: 'Listings seen', color: CSSVAR('--series-1') },
+    { key: 'jobsNew', name: 'New jobs', color: CSSVAR('--series-2') },
+  ];
+  document.getElementById('runs-legend').innerHTML = series
+    .map((s) => `<li><span class="swatch" style="background:${s.color}"></span>${esc(s.name)}</li>`).join('');
+  lineChart(document.getElementById('runs-chart'), d.runs, series);
+}
+
+function renderTables(d) {
+  table(document.getElementById('runs-table'), [
+    { label: 'Run', render: (r) => `<span class="mono">#${r.id}</span>` },
+    { label: 'Mode', render: (r) => `<span class="pill">${esc(r.mode)}</span>` },
+    { label: 'Started', render: (r) => `<span class="mono">${esc((r.startedAt ?? '').replace('T', ' ').slice(0, 19))}</span>` },
+    { label: 'Status', render: (r) => (r.ok === null ? '<span class="pill">running</span>' : r.ok ? '<span class="ok">ok</span>' : '<span class="bad">errors</span>') },
+    { label: 'Seen', num: true, render: (r) => fmt(r.jobsSeen) },
+    { label: 'New', num: true, render: (r) => fmt(r.jobsNew) },
+    { label: 'Updated', num: true, render: (r) => fmt(r.jobsUpdated) },
+    { label: 'Closed', num: true, render: (r) => fmt(r.jobsClosed) },
+    { label: 'Details', num: true, render: (r) => fmt(r.detailsOk) },
+  ], [...d.runs].reverse(), 'No runs recorded yet.');
+
+  table(document.getElementById('alerts-table'), [
+    { label: 'When', render: (a) => `<span class="mono">${esc((a.createdAt ?? '').replace('T', ' ').slice(0, 19))}</span>` },
+    { label: 'Tenant', render: (a) => esc(a.slug) },
+    { label: 'Kind', render: (a) => `<span class="pill">${esc(a.kind)}</span>` },
+    { label: 'Detail', render: (a) => `<span class="bad">${esc(a.detail)}</span>` },
+  ], d.alerts, 'No alerts — no sharp job-count drops detected.');
+}
+
+/* Table view satisfies the relief rule for the light-mode aqua slot, and is the
+   accessible alternative to every chart on the page. */
+function renderDataTables(d) {
+  const mount = document.getElementById('data-tables');
+  table(mount.querySelector('#t-platform'), [
+    { label: 'Front end', render: (r) => esc(r.label) },
+    { label: 'Key', render: (r) => `<span class="mono">${esc(r.key)}</span>` },
+    { label: 'Live tenants', num: true, render: (r) => fmt(r.value) },
+  ], d.platforms.map((p) => ({ label: PLATFORM_LABEL[p.platform] ?? p.platform, key: p.platform, value: p.count })), 'No data.');
+
+  table(mount.querySelector('#t-tenants'), [
+    { label: 'Company', render: (r) => esc(r.company || r.slug) },
+    { label: 'Slug', render: (r) => `<span class="mono">${esc(r.slug)}</span>` },
+    { label: 'Front end', render: (r) => esc(PLATFORM_LABEL[r.platform] ?? r.platform) },
+    { label: 'Open jobs', num: true, render: (r) => fmt(r.jobs) },
+  ], d.topTenants, 'No data.');
+
+  table(mount.querySelector('#t-countries'), [
+    { label: 'Country', render: (r) => esc(r.country) },
+    { label: 'Open jobs', num: true, render: (r) => fmt(r.jobs) },
+  ], d.countries, 'No data.');
+}
+
+async function load() {
+  const res = await fetch('./api/summary');
+  if (!res.ok) throw new Error(`summary failed: HTTP ${res.status}`);
+  DATA = await res.json();
+  document.getElementById('meta').textContent =
+    `${DATA.kpis.tenantsLive} live tenants · ${fmt(DATA.kpis.jobsOpen)} open jobs · `
+    + `storage: ${DATA.dialect} · generated ${DATA.generatedAt.replace('T', ' ').slice(0, 19)} UTC`;
+  tiles(DATA);
+  renderCharts(DATA);
+  renderTables(DATA);
+  renderDataTables(DATA);
+}
+
+document.getElementById('toggle-theme').addEventListener('click', () => {
+  const root = document.documentElement;
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  const current = root.getAttribute('data-theme') ?? (dark ? 'dark' : 'light');
+  root.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark');
+  try { localStorage.setItem('sg-theme', root.getAttribute('data-theme')); } catch { /* private mode */ }
+  if (DATA) renderCharts(DATA);
+});
+
+document.getElementById('toggle-table').addEventListener('click', (e) => {
+  const on = e.currentTarget.getAttribute('aria-pressed') === 'true';
+  e.currentTarget.setAttribute('aria-pressed', String(!on));
+  document.getElementById('data-tables').hidden = on;
+});
+
+try {
+  const saved = localStorage.getItem('sg-theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+} catch { /* private mode */ }
+
+addEventListener('resize', () => { if (DATA) renderCharts(DATA); });
+load().catch((err) => {
+  document.getElementById('meta').innerHTML = `<span class="bad">${esc(err.message)}</span>`;
+});
+</script>
+
+<div class="wrap" id="data-tables" hidden>
+  <div class="card span-2"><h2>Front ends</h2><div id="t-platform"></div></div>
+  <div class="card span-2" style="margin-top:12px"><h2>Top tenants</h2><div id="t-tenants"></div></div>
+  <div class="card span-2" style="margin-top:12px"><h2>Countries</h2><div id="t-countries"></div></div>
+</div>
+</body>
+</html>

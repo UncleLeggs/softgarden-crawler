@@ -1,6 +1,3 @@
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
-
 CREATE TABLE IF NOT EXISTS tenants (
   slug           TEXT PRIMARY KEY,
   platform       TEXT,            -- career-next | career-embedded | board
@@ -59,6 +56,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_open    ON jobs(is_open);
 CREATE INDEX IF NOT EXISTS idx_jobs_tenant  ON jobs(tenant_slug, is_open);
 CREATE INDEX IF NOT EXISTS idx_jobs_country ON jobs(country);
 CREATE INDEX IF NOT EXISTS idx_jobs_posted  ON jobs(date_posted);
+CREATE INDEX IF NOT EXISTS idx_jobs_detail  ON jobs(is_open, detail_ok);
 
 -- One row per crawl run, for observability.
 CREATE TABLE IF NOT EXISTS runs (

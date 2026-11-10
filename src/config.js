@@ -4,6 +4,9 @@ const num = (v, d) => (v !== undefined && v !== '' && Number.isFinite(Number(v))
 
 export const config = {
   dbPath: env.SG_DB || 'data/softgarden.db',
+  // Set SG_DB_URL to use Postgres instead of SQLite; SQLite needs no install.
+  dbUrl: env.SG_DB_URL || null,
+  dashboardPort: num(env.SG_PORT, 8080),
   cacheDir: env.SG_CACHE_DIR || '.cc-cache',
 
   // The career hosts sit behind Cloudflare and start returning 429 above ~3

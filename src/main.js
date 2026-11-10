@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import { log } from './logger.js';
-import * as db from './db.js';
+import { createStore } from './storage/index.js';
+import * as repo from './repository.js';
 import { runDiscover, runCrawl, runDetails, runWeekly } from './pipeline.js';
 import { schedule, nextRun } from './scheduler.js';
 import { exportCsv, exportNdjson } from './export.js';
@@ -23,6 +24,7 @@ const USAGE = `softgarden-crawler
   details             Backfill details for jobs that have none
   weekly              discover + crawl with details (what the schedule runs)
   schedule            Stay running and execute "weekly" on SG_CRON (default: Mon 03:17 UTC)
+  dashboard           Serve the visualization dashboard (default http://localhost:8080)
   stats               Print database summary
   alerts              Print recent alerts
   export              Write jobs/tenants to CSV or NDJSON
@@ -38,7 +40,7 @@ Options
   --out <path>        export: destination file
   --open-only         export: only open jobs (default true for jobs)
 
-Environment: SG_DB, SG_CONCURRENCY, SG_RPS, SG_CRON, SG_PAGE_SIZE, SG_LOG_LEVEL,
+Environment: SG_DB, SG_DB_URL, SG_PORT, SG_CONCURRENCY, SG_RPS, SG_CRON, SG_PAGE_SIZE, SG_LOG_LEVEL,
 SG_DROP_THRESHOLD, SG_CACHE_DIR, SG_USER_AGENT  (see .env.example)
 `;
 
@@ -74,7 +76,8 @@ async function main() {
       break;
     }
     case 'stats': {
-      const s = db.stats(db.openDb());
+      const store = await createStore();
+      const s = await repo.stats(store);
       console.log(`\nTenants      ${s.tenantsLive} live / ${s.tenants} known`);
       for (const r of s.byPlatform) console.log(`  ${String(r.platform).padEnd(16)} ${r.n}`);
       console.log(`Jobs         ${s.jobsOpen} open, ${s.jobsClosed} closed`);
@@ -93,26 +96,34 @@ async function main() {
         for (const a of s.openAlerts) console.log(`  ${a.created_at} ${a.tenant_slug} ${a.kind} ${a.detail}`);
       }
       console.log(`\nNext scheduled run: ${nextRun(config.cron).toISOString()} (SG_CRON="${config.cron}")\n`);
+      await store.close();
       break;
     }
     case 'alerts': {
-      const d = db.openDb();
-      const rows = d.prepare('SELECT * FROM alerts ORDER BY id DESC LIMIT 100').all();
+      const store = await createStore();
+      const rows = await store.all('SELECT * FROM alerts ORDER BY id DESC LIMIT 100');
       if (!rows.length) { console.log('no alerts'); break; }
       for (const a of rows) console.log(`${a.created_at}  ${a.tenant_slug.padEnd(34)} ${a.kind.padEnd(16)} ${a.detail}`);
+      await store.close();
       break;
     }
     case 'export': {
-      const d = db.openDb();
+      const store = await createStore();
       const what = flag('what', 'jobs');
       const format = flag('format', 'csv');
       const out = flag('out', `out/${what}.${format === 'ndjson' ? 'ndjson' : 'csv'}`);
       const rows = what === 'tenants'
-        ? d.prepare('SELECT * FROM tenants ORDER BY slug').all()
-        : d.prepare(`SELECT * FROM jobs ${argv.includes('--all') ? '' : 'WHERE is_open=1'} ORDER BY tenant_slug, job_id`).all();
+        ? await store.all('SELECT * FROM tenants ORDER BY slug')
+        : await store.all(`SELECT * FROM jobs ${argv.includes('--all') ? '' : 'WHERE is_open = 1'} ORDER BY tenant_slug, job_id`);
       const n = format === 'ndjson' ? await exportNdjson(rows, out) : await exportCsv(rows, out);
       console.log(`wrote ${n} ${what} rows to ${out}`);
+      await store.close();
       break;
+    }
+    case 'dashboard': {
+      const { startDashboard } = await import('./dashboard/server.js');
+      await startDashboard({ port: config.dashboardPort });
+      break; // startDashboard keeps the process alive
     }
     default:
       console.log(USAGE);

@@ -18,5 +18,21 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Syntax check
         run: for f in $(find src test -name '*.js'); do node --check "$f" || exit 1; done
+      - name: Dashboard inline module syntax
+        run: |
+          node -e "const fs=require('fs');const h=fs.readFileSync('src/dashboard/public/index.html','utf8');const m=h.match(/<script type=\"module\">([\s\S]*?)<\/script>/);if(!m){process.exit(1)}fs.writeFileSync('/tmp/dash.mjs',m[1])"
+          node --check /tmp/dash.mjs
+
       - name: Unit tests
         run: npm test
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t softgarden-crawler:ci .
+      - name: Run tests inside the image
+        run: docker run --rm -v "$PWD/test:/app/test:ro" softgarden-crawler:ci node --test 'test/*.test.js'
+      - name: Validate compose
+        run: docker compose config --quiet

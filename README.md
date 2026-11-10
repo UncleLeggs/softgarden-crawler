@@ -3,15 +3,22 @@
 Discovers [Softgarden](https://softgarden.de) ATS customers from the Common Crawl index and
 crawls their job postings across **all three** of Softgarden's career-site generations.
 
-SQLite storage, per-job change detection, confirmed expiry, drop alerting, and a weekly
-schedule. **Zero runtime dependencies** — Node's built-ins only (`node:sqlite`, `node:test`,
-`fetch`).
+SQLite or Postgres storage, per-job change detection, confirmed expiry, drop alerting, a
+weekly schedule, a dashboard, and Docker. **No required dependencies** — the default path is
+Node's built-ins only (`node:sqlite`, `node:test`, `fetch`), so there is nothing to install.
 
 ```bash
 npm run discover     # find customers, detect each one's front end
-npm run crawl        # listings + per-job details into SQLite
+npm run crawl        # listings + per-job details into the database
 npm run stats        # what's in the database
+npm run dashboard    # http://localhost:8080
 npm run schedule     # stay running, crawl weekly
+```
+
+Or the whole stack:
+
+```bash
+docker compose up -d        # dashboard + weekly scheduler, data on a volume
 ```
 
 ## Why this is not a one-selector scraper
@@ -144,7 +151,23 @@ Two options, both weekly:
 
 ## Storage
 
-SQLite via `node:sqlite`. Schema in [`src/schema.sql`](src/schema.sql):
+Two backends behind one interface ([`src/storage/`](src/storage/)), chosen by env var:
+
+| | |
+|---|---|
+| **SQLite** (default) | `node:sqlite`, no install. `git clone && npm run crawl` just works. |
+| **Postgres** | set `SG_DB_URL`; needs `npm install pg` (an optionalDependency, so it is not pulled in by default). |
+
+All SQL lives in [`src/repository.js`](src/repository.js) and is written to run on both: `?`
+placeholders (rewritten to `$1..$n` for Postgres), `ON CONFLICT ... DO UPDATE`, `INSERT ...
+RETURNING id`, and no SQLite-only scalars — no `MAX(a,b)`, no `datetime('now')`. A test asserts
+the two schema files declare identical tables and columns, so a column added to one and
+forgotten in the other fails CI rather than production.
+
+`node:sqlite` is synchronous and `pg` is not, so the repository is async throughout.
+
+Tables ([`schema.sqlite.sql`](src/storage/schema.sqlite.sql) /
+[`schema.postgres.sql`](src/storage/schema.postgres.sql)):
 
 - `tenants` — slug, platform, host, branded domain, company, widget IDs, feed availability
 - `jobs` — the unified job record, keyed `(tenant_slug, job_id)`, with `version_id` /
@@ -153,11 +176,14 @@ SQLite via `node:sqlite`. Schema in [`src/schema.sql`](src/schema.sql):
 - `tenant_snapshots` — per-run job counts, the basis for drop detection
 - `alerts` — what fired, when
 
-Swapping in Postgres means reimplementing [`src/db.js`](src/db.js); nothing else touches SQL.
+Note that SQLite runs in WAL mode: the `.db` file alone is not the whole database. Copy
+`*.db*` (including `-wal` and `-shm`) or close the writer first, or you will silently move an
+older snapshot — which is exactly what happened the first time I seeded a Docker volume by hand.
 
 ## Setup
 
-Needs **Node ≥ 22.5** (for `node:sqlite`). No `npm install` — there are no dependencies.
+Needs **Node ≥ 22.5** (for `node:sqlite`). No `npm install` for the default SQLite path — there
+are no required dependencies.
 
 ```bash
 git clone <this repo> && cd softgarden-crawler
@@ -167,7 +193,42 @@ npm run discover              # ~2 min, downloads and caches a ~100 MB index fil
 npm run crawl -- --no-details # listings only, fast
 npm run crawl                 # with details: one request per job, so be patient
 npm run stats
+npm run dashboard             # http://localhost:8080
 ```
+
+### Docker
+
+```bash
+docker compose up -d                              # dashboard :8080 + weekly scheduler
+docker compose run --rm crawler-once discover     # one-off commands
+docker compose run --rm crawler-once crawl --no-details
+docker compose logs -f scheduler
+```
+
+Two named volumes persist the state that has to outlive containers: `sgdata` for the database
+(change detection and drop alerts compare against previous runs) and `ccindex` for the ~100 MB
+Common Crawl index.
+
+Postgres instead of SQLite:
+
+```bash
+npm install pg
+SG_DB_URL=postgres://softgarden:softgarden@db:5432/softgarden \
+  docker compose --profile postgres up -d
+```
+
+## Dashboard
+
+`npm run dashboard`, or port 8080 from the compose stack. A zero-dependency Node server
+([`src/dashboard/server.js`](src/dashboard/server.js)) serving `/api/summary`, `/api/jobs` and
+`/healthz`, plus a single-file front end with hand-rolled inline SVG charts — no CDN, so it works
+in an offline container.
+
+Front-end generation split, open jobs by country, top tenants, and a crawl-history line chart
+over runs; plus run and alert tables. Light and dark are both selected (not an automatic flip),
+every chart has a hover tooltip, and a **Table view** toggle gives the same numbers as text —
+which is also what the palette's one sub-3:1 contrast slot requires. The categorical palette was
+validated with the data-viz validator (all checks pass in both modes).
 
 Details are one request per job. At 30k open jobs and a deliberately polite rate, a full detail
 pass is an overnight job — use `--detail-limit` or the incremental `details` command, which is

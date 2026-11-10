@@ -1,0 +1,78 @@
+# Default stack: SQLite on a named volume + the dashboard + the weekly scheduler.
+#   docker compose up -d                 -> dashboard on http://localhost:8080
+#   docker compose run --rm crawler-once discover
+#   docker compose run --rm crawler-once crawl --no-details
+#
+# Postgres instead of SQLite (adds the pg driver, swaps the storage adapter):
+#   docker compose --profile postgres up -d
+# Both services then read SG_DB_URL and the sqlite volume goes unused.
+
+name: softgarden-crawler
+
+x-common: &common
+  build: .
+  image: softgarden-crawler:local
+  restart: unless-stopped
+  environment: &env
+    SG_DB: /data/softgarden.db
+    SG_CACHE_DIR: /cache
+    SG_DB_URL: ${SG_DB_URL:-}
+    SG_CONCURRENCY: ${SG_CONCURRENCY:-3}
+    SG_RPS: ${SG_RPS:-4}
+    SG_CRAWLS: ${SG_CRAWLS:-1}
+    SG_CRON: ${SG_CRON:-17 3 * * 1}
+    SG_DROP_THRESHOLD: ${SG_DROP_THRESHOLD:-0.3}
+    SG_LOG_LEVEL: ${SG_LOG_LEVEL:-info}
+    SG_USER_AGENT: ${SG_USER_AGENT:-softgarden-crawler/1.0 (+https://github.com/example/softgarden-crawler)}
+  volumes:
+    - sgdata:/data
+    - ccindex:/cache
+
+services:
+  # Visualization: a zero-dependency Node server rendering the dashboard.
+  dashboard:
+    <<: *common
+    command: ["node", "src/cli.js", "dashboard"]
+    ports:
+      - "${SG_PORT:-8080}:8080"
+    environment:
+      <<: *env
+      SG_PORT: 8080
+
+  # The weekly schedule, running in-process (Mondays 03:17 UTC by default).
+  scheduler:
+    <<: *common
+    command: ["node", "src/cli.js", "schedule"]
+    # A crawl is long-running; let it finish rather than killing it mid-request.
+    stop_grace_period: 2m
+
+  # One-off commands. Not started by `up` (replicas: 0); use `compose run`.
+  crawler-once:
+    <<: *common
+    entrypoint: ["node", "src/cli.js"]
+    restart: "no"
+    deploy:
+      replicas: 0
+
+  db:
+    image: postgres:17-alpine
+    profiles: ["postgres"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-softgarden}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-softgarden}
+      POSTGRES_DB: ${POSTGRES_DB:-softgarden}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-softgarden} -d ${POSTGRES_DB:-softgarden}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  sgdata:
+  ccindex:
+  pgdata:

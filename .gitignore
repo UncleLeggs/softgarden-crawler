@@ -1,0 +1,12 @@
+node_modules/
+.cc-cache/
+data/
+*.db
+*.db-journal
+*.db-wal
+*.sqlite
+out/
+*.csv
+*.ndjson
+.env
+.DS_Store

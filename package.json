@@ -1,0 +1,22 @@
+{
+  "name": "softgarden-crawler",
+  "version": "1.0.0",
+  "description": "Discovers Softgarden ATS customers from Common Crawl and crawls their job postings across all three career-site generations. Zero runtime dependencies.",
+  "type": "module",
+  "engines": { "node": ">=22.5.0" },
+  "bin": { "softgarden": "./src/cli.js" },
+  "scripts": {
+    "discover": "node --disable-warning=ExperimentalWarning src/cli.js discover",
+    "crawl": "node --disable-warning=ExperimentalWarning src/cli.js crawl",
+    "details": "node --disable-warning=ExperimentalWarning src/cli.js details",
+    "stats": "node --disable-warning=ExperimentalWarning src/cli.js stats",
+    "export": "node --disable-warning=ExperimentalWarning src/cli.js export",
+    "alerts": "node --disable-warning=ExperimentalWarning src/cli.js alerts",
+    "weekly": "node --disable-warning=ExperimentalWarning src/cli.js weekly",
+    "schedule": "node --disable-warning=ExperimentalWarning src/cli.js schedule",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  },
+  "keywords": ["scraping", "crawler", "ats", "softgarden", "common-crawl", "job-postings"],
+  "license": "MIT",
+  "private": false
+}

@@ -1,0 +1,192 @@
+# softgarden-crawler
+
+Discovers [Softgarden](https://softgarden.de) ATS customers from the Common Crawl index and
+crawls their job postings across **all three** of Softgarden's career-site generations.
+
+SQLite storage, per-job change detection, confirmed expiry, drop alerting, and a weekly
+schedule. **Zero runtime dependencies** — Node's built-ins only (`node:sqlite`, `node:test`,
+`fetch`).
+
+```bash
+npm run discover     # find customers, detect each one's front end
+npm run crawl        # listings + per-job details into SQLite
+npm run stats        # what's in the database
+npm run schedule     # stay running, crawl weekly
+```
+
+## Why this is not a one-selector scraper
+
+Softgarden runs three different career-site front ends, and a crawler that assumes one of them
+silently loses most of the market. Current snapshot: **775 customers discovered, 761 live.**
+
+| | `career.softgarden.de` (Next.js) | `career.softgarden.de` (server-rendered) | `softgarden.io` (Wicket) |
+|---|---|---|---|
+| Share of live customers | ~8% | a handful | **~91%** |
+| `jobs.feed.json` | yes | yes | **404** |
+| Widget list API | yes | yes | **no** |
+| Widget IDs found in | `__NEXT_DATA__` | plain `"userId"/"projectId"/"pageId"` keys | n/a |
+| Listings from | widget API, paginated | widget API, paginated | one server-rendered page |
+| Details from | `context.job` | `context.job` | JSON-LD `JobPosting` |
+
+The naive plan — "take the feed, keep whatever responds" — would have discarded about 90% of
+customers, because the feed only exists on one of the three.
+
+## Where the data actually comes from
+
+### Discovery: Common Crawl's index files, not its API
+
+`index.commoncrawl.org` rate-limits hard and goes down for long stretches — sustained 504s on
+every query, including `url=example.com&limit=1`. So discovery reads the static index under
+`data.commoncrawl.org`:
+
+1. download `cluster.idx` once per snapshot (~100 MB) and cache it
+2. scan it locally for the blocks covering the SURT prefixes `de,softgarden,career,` and
+   `io,softgarden,`
+3. range-fetch only those blocks (1 block + 5 blocks respectively) and extract hostnames
+
+**Do not binary-search `cluster.idx` over HTTP range requests.** It is elegant — ~14 small
+requests instead of a 100 MB download — and CloudFront's WAF treats that burst as abuse, then
+returns an immediate `403 Request blocked` for *every* request from your IP for the next
+15–30 minutes. One cached bulk GET is both friendlier and simpler. This is in the code as a
+comment, because it is the kind of mistake that gets reintroduced.
+
+`--index-server` keeps the old CDX API path available as a fallback.
+
+### Listings: the widget API, paginated
+
+`POST https://pcw-api.softgarden.de/widgets/job-list/job-ads` — undocumented, no auth. Needs
+three UUIDs, all extractable from the career page itself.
+
+Measured behaviour, which the [pagination tests](test/pagination.test.js) pin:
+
+- `jobsLength` is the **authoritative** total. The career page's own `context.jobAds.count`
+  disagrees with it (1058 vs 1049 on one tenant) — never use that for completeness.
+- `pagination.dataSource.length` gives the page count, but it is only trusted when the total
+  is unknown: a page count that contradicts `jobsLength` must not cost rows.
+- `numberOfJobsOnPage` is honoured well past 200 (a 1049-job tenant returns all of them at
+  2000), but relying on an unbounded page size is fragile. Default is 100.
+- Verified live: a 1049-job tenant yields 1049 unique jobs across 11 pages, no overlap.
+
+### Details: the job page, because the list endpoint has no descriptions
+
+The widget list endpoint is a *listing* endpoint — its records carry title, location, category,
+career level, work time, coordinates and dates, but **no description field at all**. There is no
+widget detail endpoint either: `/widgets/job-ad`, `/widgets/job-detail/job-ad` and friends all
+404. So detail comes from the job page:
+
+- **career pages** → `__NEXT_DATA__` → `props.pageProps.data.context.job`. The richest source
+  available: full HTML description, `remoteStatusKey` (`FULLY_REMOTE`), career level, work
+  experience, employment type, **ISO country code**, apply link, and a per-job `versionId`.
+- **legacy board** → `<script type="application/ld+json">` `JobPosting`: description,
+  `datePosted`, `validThrough`, `baseSalary`, full `PostalAddress`.
+
+`versionId` matters because the feeds have **no per-job `dateModified`** — only a feed-level one.
+It is the exact change signal on the career stack; elsewhere a content hash stands in.
+
+### Feeds: for timing, not for truth
+
+`{host}/jobs.feed.json` is read only to answer "did this customer change at all". Its values are
+the messiest of the three sources. From home24's live feed:
+
+- `addressRegion` mixes languages: `Niedersachsen` **and** `Lower Saxony` in one document
+- `addressCountry` mixes `Deutschland` and `Germany`
+- `postalCode` is sometimes `"-"`
+- no job carries `validThrough`
+
+[`normalize.js`](src/normalize.js) folds all of that to ISO country codes, canonical German
+region names, and `NULL` for junk placeholders.
+
+## Rate limits are the real constraint
+
+Not parsing. Two different WAFs will stop you:
+
+- **Career hosts (Cloudflare).** Start returning 429 above ~3 concurrent requests. An early
+  run at concurrency 8 had **554 of 775 tenants fail** — they looked dead, but it was pure
+  throttling. Defaults are `SG_CONCURRENCY=3`, `SG_RPS=4`, with `Retry-After` honoured.
+- **`data.commoncrawl.org` (CloudFront).** See the discovery note above. A 403 there is not
+  retried, because retrying extends the block; the error says to wait or use `--index-server`.
+
+## Expiry is confirmed, never assumed
+
+A job missing from a crawl is a *candidate* for closing. It is closed only when fetching its URL
+returns a definitive **404/410** — a throttled or timed-out request must never look like a
+removed job. Each run also snapshots per-tenant counts and raises an alert when a count falls by
+more than `SG_DROP_THRESHOLD` (default 30%), since a cliff is usually a crawl problem rather
+than a customer closing 80% of its roles.
+
+## Commands
+
+| | |
+|---|---|
+| `npm run discover` | Find slugs in Common Crawl, detect each tenant's front end, record feed availability |
+| `npm run crawl` | Listings for every live tenant + per-job details (`--no-details` to skip) |
+| `npm run details` | Backfill details for jobs that have none (`--limit n`) |
+| `npm run weekly` | `discover` + `crawl` with details — what the schedule runs |
+| `npm run schedule` | Long-running scheduler on `SG_CRON` (default Mondays 03:17 UTC) |
+| `npm run stats` | Database summary, recent runs, alerts, next scheduled run |
+| `npm run alerts` | Recent drop alerts |
+| `npm run export` | `--what jobs\|tenants --format csv\|ndjson --out path` |
+| `npm test` | 30 unit tests, no network |
+
+Useful flags: `--crawls n` (merge several snapshots), `--slug a,b` (restrict), `--detail-limit n`
+(cap details per tenant).
+
+## Scheduling
+
+Two options, both weekly:
+
+- **In-process:** `npm run schedule` parses `SG_CRON` with a small dependency-free 5-field cron
+  implementation (`*`, lists, ranges, steps, `7` as Sunday), sleeps to the next match, and
+  **skips rather than queues** a tick if the previous run is still going.
+- **CI:** [`.github/workflows/weekly.yml`](.github/workflows/weekly.yml) runs it on GitHub
+  Actions, caching both the SQLite database and `cluster.idx` between runs so change detection
+  and drop alerts have history to compare against, and uploading CSV exports as artifacts.
+
+## Storage
+
+SQLite via `node:sqlite`. Schema in [`src/schema.sql`](src/schema.sql):
+
+- `tenants` — slug, platform, host, branded domain, company, widget IDs, feed availability
+- `jobs` — the unified job record, keyed `(tenant_slug, job_id)`, with `version_id` /
+  `content_hash` for change detection and `is_open` / `closed_at` for lifecycle
+- `runs` — one row per run: counts of new/updated/closed, details filled, errors
+- `tenant_snapshots` — per-run job counts, the basis for drop detection
+- `alerts` — what fired, when
+
+Swapping in Postgres means reimplementing [`src/db.js`](src/db.js); nothing else touches SQL.
+
+## Setup
+
+Needs **Node ≥ 22.5** (for `node:sqlite`). No `npm install` — there are no dependencies.
+
+```bash
+git clone <this repo> && cd softgarden-crawler
+cp .env.example .env          # optional; every value has a default
+npm test
+npm run discover              # ~2 min, downloads and caches a ~100 MB index file
+npm run crawl -- --no-details # listings only, fast
+npm run crawl                 # with details: one request per job, so be patient
+npm run stats
+```
+
+Details are one request per job. At 30k open jobs and a deliberately polite rate, a full detail
+pass is an overnight job — use `--detail-limit` or the incremental `details` command, which is
+what the weekly schedule relies on.
+
+## Limits, stated plainly
+
+- Coverage is bounded by the Common Crawl snapshot. `home24` is a live Softgarden customer that
+  was **not** in `CC-MAIN-2026-43`, so production should also seed slugs from the vendor side or
+  from certificate transparency (`crt.sh` finds only the handful with dedicated certs — most
+  hide behind a `*.career.softgarden.de` wildcard).
+- `pcw-api` is undocumented and could change without notice. The official
+  [Frontend API v3](https://dev.softgarden.de/frontend-v3/) is a different, OAuth-based surface
+  that never mentions it.
+- `validThrough` exists only on the legacy board; the career stack does not expose it.
+- Salary is present in the payload but usually empty.
+- The legacy board renders every job server-side, so its counts are exact — but if Softgarden
+  ever switches it to real server-side pagination, `fetchBoardListings` needs a page loop.
+
+## License
+
+MIT

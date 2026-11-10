@@ -1,0 +1,83 @@
+name: weekly-crawl
+
+on:
+  schedule:
+    # Mondays 03:17 UTC. GitHub queues cron jobs, so the exact minute drifts.
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      crawls:
+        description: 'Common Crawl snapshots to merge'
+        default: '1'
+
+concurrency:
+  group: weekly-crawl
+  cancel-in-progress: false
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      # The database is the state that must survive between runs, so that
+      # change detection and drop alerts have something to compare against.
+      - name: Restore database
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: softgarden-db-${{ github.run_id }}
+          restore-keys: softgarden-db-
+
+      # cluster.idx is ~100 MB per snapshot; caching it avoids re-downloading
+      # and keeps us well clear of Common Crawl's WAF.
+      - name: Restore Common Crawl index cache
+        uses: actions/cache@v4
+        with:
+          path: .cc-cache
+          key: cc-index-${{ github.run_id }}
+          restore-keys: cc-index-
+
+      - run: npm test
+
+      - name: Weekly crawl
+        env:
+          SG_CRAWLS: ${{ github.event.inputs.crawls || '1' }}
+          SG_CONCURRENCY: '3'
+          SG_RPS: '4'
+          SG_LOG_LEVEL: info
+        run: npm run weekly
+
+      - name: Stats
+        if: always()
+        run: npm run stats
+
+      - name: Export snapshots
+        if: always()
+        run: |
+          node --disable-warning=ExperimentalWarning src/cli.js export --what tenants --out out/tenants.csv
+          node --disable-warning=ExperimentalWarning src/cli.js export --what jobs --out out/jobs.csv
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crawl-output
+          path: |
+            out/
+            data/softgarden.db
+          retention-days: 30
+
+      - name: Fail the run if alerts fired
+        if: always()
+        run: |
+          COUNT=$(node --disable-warning=ExperimentalWarning -e "import('./src/db.js').then(m=>{const d=m.openDb();console.log(d.prepare('SELECT COUNT(*) n FROM alerts WHERE created_at > datetime(\"now\",\"-1 day\")').get().n)})")
+          echo "alerts in the last day: $COUNT"
+          if [ "$COUNT" -gt 0 ]; then
+            echo "::warning::$COUNT job-count drop alert(s) - check the stats output"
+          fi

@@ -289,8 +289,8 @@ The live dashboard serves a **publication-safe snapshot**, not the crawl databas
 ```bash
 npm run build:public      # data/softgarden.db -> data/public.db
 fly auth login            # once
-fly launch --copy-config  # once: creates the app from fly.toml
-fly deploy                # builds Dockerfile.public, ~18 MB of data baked in
+fly launch --copy-config --name <app> --ha=false --no-deploy   # once
+fly deploy --remote-only --ha=false                            # ~18 MB baked in
 ```
 
 ### Deploying on every weekly run
@@ -301,6 +301,10 @@ create a deploy token and store it as a repository secret:
 ```bash
 fly tokens create deploy -a softgarden-crawler   # then add as secret FLY_API_TOKEN
 ```
+
+`--ha=false` on both: `launch` and `deploy` each default to adding a spare machine for
+zero-downtime rollout, which doubles the footprint of a read-only dashboard that can afford a
+second of resume.
 
 Without that secret the crawl still runs and simply logs that publishing was skipped, so a fork
 is not expected to hold deploy credentials. The publish step runs `--min-jobs=20000`: a snapshot

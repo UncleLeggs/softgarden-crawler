@@ -77,9 +77,12 @@ jobs:
         if: env.FLY_API_TOKEN != ''
         uses: superfly/flyctl-actions/setup-flyctl@master
 
+      # --ha=false: deploy defaults to creating a spare machine for zero-downtime
+      # rollout, which doubles the footprint of a read-only dashboard. The first
+      # manual deploy created one before this was noticed.
       - name: Deploy the dashboard
         if: env.FLY_API_TOKEN != ''
-        run: flyctl deploy --remote-only --config fly.toml
+        run: flyctl deploy --remote-only --ha=false --config fly.toml
 
       - name: Note when publishing was skipped
         if: env.FLY_API_TOKEN == ''

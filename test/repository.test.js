@@ -174,10 +174,10 @@ test('stats returns every key its consumers read, including recentAlerts', async
   const s = await stats(store);
   for (const key of ['tenants', 'tenantsLive', 'brandedDomains', 'byPlatform', 'jobsOpen',
     'jobsClosed', 'withDescription', 'remote', 'countries', 'topTenants', 'lastRuns',
-    'recentAlerts']) {
+    'recentAlerts', 'detailFailures']) {
     assert.ok(key in s, `stats() must expose "${key}"`);
   }
-  for (const key of ['byPlatform', 'countries', 'topTenants', 'lastRuns', 'recentAlerts']) {
+  for (const key of ['byPlatform', 'countries', 'topTenants', 'lastRuns', 'recentAlerts', 'detailFailures']) {
     assert.ok(Array.isArray(s[key]), `stats().${key} must be an array, not ${typeof s[key]}`);
   }
   await store.close();
@@ -194,5 +194,18 @@ test('an alert raised by detectDrops shows up in stats().recentAlerts', async ()
   const s = await stats(store);
   assert.equal(s.recentAlerts.length, 1);
   assert.equal(s.recentAlerts[0].kind, 'job_count_drop');
+  await store.close();
+});
+
+test('stats groups missing descriptions by recorded reason', async () => {
+  const store = await freshStore();
+  await upsertTenant(store, tenant, 'career.softgarden.de');
+  await upsertJob(store, 'acme', { jobId: '1', title: 'A', detailOk: false, detailNote: 'HTTP 404' });
+  await upsertJob(store, 'acme', { jobId: '2', title: 'B', detailOk: false, detailNote: 'HTTP 404' });
+  await upsertJob(store, 'acme', { jobId: '3', title: 'C', detailOk: false, detailNote: 'no JSON-LD JobPosting' });
+  await upsertJob(store, 'acme', { jobId: '4', title: 'D', descriptionText: 'x', detailOk: true });
+  const s = await stats(store);
+  assert.deepEqual(s.detailFailures.map((d) => [d.reason, Number(d.n)]),
+    [['HTTP 404', 2], ['no JSON-LD JobPosting', 1]]);
   await store.close();
 });

@@ -59,6 +59,7 @@ const rowToTenant = (r) => ({
   slug: r.slug, platform: r.platform, host: r.host, customDomain: r.custom_domain,
   companyName: r.company_name, locale: r.locale, userId: r.user_id, projectId: r.project_id,
   pageId: r.page_id, seenOn: r.seen_on, live: Number(r.live) === 1,
+  detailHost: r.detail_host ?? null,
 });
 
 export async function getTenants(store, { liveOnly = true, platform = null, slugs = null } = {}) {
@@ -87,14 +88,14 @@ export async function upsertJob(store, tenantSlug, job) {
          date_posted, valid_through, employment_type, career_level, work_experience, work_time,
          remote_status, remote_key, salary, city, region, country, postal_code, street_address,
          lat, lng, categories, company_name, apply_url, version_id, content_hash, is_open,
-         detail_ok, first_seen, last_seen)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)`,
+         detail_ok, detail_note, first_seen, last_seen)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?)`,
       [tenantSlug, jobId, job.url, job.title, job.descriptionHtml, job.descriptionText,
         job.datePosted, job.validThrough, job.employmentType, job.careerLevel, job.workExperience,
         job.workTime, job.remoteStatus, job.remoteStatusKey, job.salary, job.city, job.region,
         job.country, job.postalCode, job.streetAddress, job.lat, job.lng,
         job.categories ? JSON.stringify(job.categories) : null, job.companyName, job.applyUrl,
-        job.versionId, hash, job.detailOk ? 1 : 0, ts, ts]);
+        job.versionId, hash, job.detailOk ? 1 : 0, job.detailNote ?? null, ts, ts]);
     return 'new';
   }
 
@@ -121,6 +122,7 @@ export async function upsertJob(store, tenantSlug, job) {
        lat = ?, lng = ?, categories = ?, company_name = ?, apply_url = ?, version_id = ?,
        content_hash = ?, is_open = 1, closed_at = NULL,
        detail_ok = CASE WHEN ? = 1 THEN 1 ELSE detail_ok END,
+       detail_note = CASE WHEN ? = 1 THEN NULL ELSE ? END,
        last_seen = ?
      WHERE tenant_slug = ? AND job_id = ?`,
     [job.url, job.title, job.descriptionHtml, job.descriptionText, job.datePosted,
@@ -128,8 +130,17 @@ export async function upsertJob(store, tenantSlug, job) {
       job.remoteStatus, job.remoteStatusKey, job.salary, job.city, job.region, job.country,
       job.postalCode, job.streetAddress, job.lat, job.lng,
       job.categories ? JSON.stringify(job.categories) : null, job.companyName, job.applyUrl,
-      job.versionId, hash, job.detailOk ? 1 : 0, ts, tenantSlug, jobId]);
+      job.versionId, hash, job.detailOk ? 1 : 0,
+      job.detailOk ? 1 : 0, job.detailNote ?? null, ts, tenantSlug, jobId]);
   return 'updated';
+}
+
+/**
+ * Remember the board host that serves a tenant's job pages, so later runs skip
+ * rediscovering it.
+ */
+export async function setDetailHost(store, slug, host) {
+  await store.run('UPDATE tenants SET detail_host = ? WHERE slug = ?', [host, slug]);
 }
 
 /** Open jobs we did not see this run. Candidates for closing, not closed yet. */
@@ -222,5 +233,11 @@ export async function stats(store) {
          jobs_updated, jobs_closed, details_ok FROM runs ORDER BY id DESC LIMIT 10`),
     recentAlerts: await store.all(
       'SELECT tenant_slug, kind, detail, created_at FROM alerts ORDER BY id DESC LIMIT 20'),
+    // Why details are missing. Without this the failures are a single number
+    // and the reason has to be re-derived from the live sites.
+    detailFailures: await store.all(
+      `SELECT COALESCE(detail_note, '(no reason recorded)') AS reason, COUNT(*) AS n
+       FROM jobs WHERE is_open = 1 AND detail_ok = 0
+       GROUP BY reason ORDER BY n DESC LIMIT 8`),
   };
 }

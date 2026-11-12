@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS tenants (
   seen_on        TEXT,
   feed_available SMALLINT,
   live           SMALLINT NOT NULL DEFAULT 0,
+  detail_host    TEXT,          -- board host that actually serves this tenant's job pages
   note           TEXT,
   first_seen     TEXT NOT NULL,
   last_checked   TEXT NOT NULL
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   detail_ok        SMALLINT NOT NULL DEFAULT 0,
   first_seen       TEXT NOT NULL,
   last_seen        TEXT NOT NULL,
+  detail_note      TEXT,          -- why a detail fetch failed; NULL when it succeeded
   closed_at        TEXT,
   PRIMARY KEY (tenant_slug, job_id)
 );

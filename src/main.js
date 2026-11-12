@@ -91,6 +91,10 @@ async function main() {
       for (const r of s.lastRuns) {
         console.log(`  #${r.id} ${r.mode.padEnd(14)} ${r.started_at} ok=${r.ok ?? '-'} seen=${r.jobs_seen} new=${r.jobs_new} closed=${r.jobs_closed} details=${r.details_ok}`);
       }
+      if (s.detailFailures.length) {
+        console.log('\nMissing descriptions, by reason');
+        for (const d of s.detailFailures) console.log(`  ${String(d.n).padStart(6)}  ${d.reason}`);
+      }
       if (s.recentAlerts.length) {
         console.log('\nRecent alerts');
         for (const a of s.recentAlerts) console.log(`  ${a.created_at} ${a.tenant_slug} ${a.kind} ${a.detail}`);

@@ -5,7 +5,7 @@ import { discoverSlugs } from './commoncrawl.js';
 import { detectTenant, PLATFORM } from './tenants.js';
 import { fetchAllWidgetJobs } from './sources/widget.js';
 import { fetchBoardListings } from './sources/board.js';
-import { fetchJobDetail, absoluteJobUrl } from './sources/detail.js';
+import { fetchJobDetail, absoluteJobUrl, resolveDetailHost } from './sources/detail.js';
 import { fetchFeedMeta } from './sources/feed.js';
 import { normalizeRegion, nullIfBlank, numOrNull, toIso, decodeEntities } from './normalize.js';
 import { createStore } from './storage/index.js';
@@ -109,12 +109,39 @@ export async function runCrawl({
       const wanted = detailLimit > 0 ? jobs.slice(0, detailLimit) : jobs;
       const details = new Map();
       if (withDetails && wanted.length) {
-        // One request per job, so details dominate the budget; keep them gentle.
-        const got = await pool(wanted, Math.max(1, Math.min(2, config.concurrency)), async (listing) => {
-          try { return [listing.jobId, await fetchJobDetail(tenant, listing)]; }
-          catch (err) { return [listing.jobId, { detailOk: false, note: err.message }]; }
-        });
-        for (const entry of got) if (Array.isArray(entry)) details.set(entry[0], entry[1]);
+        let detailHost = tenant.detailHost ?? null;
+        const fetchInto = async (items) => {
+          // One request per job, so details dominate the budget; keep them gentle.
+          const got = await pool(items, Math.max(1, Math.min(2, config.concurrency)), async (listing) => {
+            try { return [listing.jobId, await fetchJobDetail(tenant, listing, { detailHost })]; }
+            catch (err) { return [listing.jobId, { detailOk: false, note: err.message }]; }
+          });
+          for (const entry of got) if (Array.isArray(entry)) details.set(entry[0], entry[1]);
+        };
+
+        await fetchInto(wanted);
+
+        // Some tenants cannot serve their own job pages: a "landing" career
+        // project has no job route, and a few career tenants publish only on
+        // the board. Both 404 on every job. Resolving the owning board host is
+        // worth a few requests -- but only once, and only for a tenant that
+        // actually failed, so a healthy tenant pays nothing.
+        const failed = wanted.filter((l) => !details.get(l.jobId)?.detailOk);
+        if (!detailHost && failed.length && failed.length === wanted.length) {
+          detailHost = await resolveDetailHost(tenant, failed[0].jobId);
+          if (detailHost) {
+            log.info(`${tenant.slug}: details resolved to ${detailHost}; retrying ${failed.length}`);
+            await repo.setDetailHost(store, tenant.slug, detailHost);
+            await fetchInto(failed);
+          }
+        }
+
+        const stillFailed = wanted.filter((l) => !details.get(l.jobId)?.detailOk).length;
+        if (stillFailed >= 10 && stillFailed / wanted.length > 0.5) {
+          const why = details.get(failed[0]?.jobId)?.note ?? 'unknown';
+          await repo.addAlert(store, runId, tenant.slug, 'details_failed',
+            `${stillFailed}/${wanted.length} detail fetches failed (${why})`);
+        }
       }
 
       for (const listing of jobs) {
@@ -126,6 +153,7 @@ export async function runCrawl({
           jobId: listing.jobId,
           url: detail?.url ?? listing.url,
           detailOk: Boolean(detail?.detailOk),
+          detailNote: detail?.detailOk ? null : (detail?.note ?? null),
           companyName: detail?.companyName ?? tenant.companyName ?? null,
         };
         const outcome = await repo.upsertJob(store, tenant.slug, merged);
@@ -186,7 +214,7 @@ export async function runDetails({ limit = 500, store: given } = {}) {
     const tenant = tenants.get(row.tenant_slug);
     if (!tenant) return;
     try {
-      const detail = await fetchJobDetail(tenant, { jobId: row.job_id, url: row.url, title: row.title });
+      const detail = await fetchJobDetail(tenant, { jobId: row.job_id, url: row.url, title: row.title }, { detailHost: tenant.detailHost ?? null });
       if (!detail.detailOk) return;
       await repo.upsertJob(store, tenant.slug, { ...detail, jobId: row.job_id, detailOk: true });
       filled++;

@@ -61,42 +61,32 @@ function salaryText(baseSalary) {
 }
 
 /** Fetch and parse one job page into the unified shape. */
-export async function fetchJobDetail(tenant, listing) {
-  const url = absoluteJobUrl(tenant, listing);
-  const { text: html } = await requestText(url, {
-    ua: config.browserUA, timeoutMs: 45_000, label: `detail ${listing.jobId}`,
-    headers: { 'accept-language': 'de-DE,de;q=0.9,en;q=0.8' },
-  });
+function fromBoardLd(url, ld, listing) {
+  const a = firstAddress(ld.jobLocation) ?? {};
+  return {
+    url, detailOk: true,
+    title: nullIfBlank(decodeEntities(ld.title)) ?? listing.title ?? null,
+    descriptionHtml: nullIfBlank(ld.description),
+    descriptionText: ld.description ? htmlToText(ld.description) : null,
+    datePosted: toIso(ld.datePosted),
+    validThrough: toIso(ld.validThrough),
+    employmentType: normalizeEmploymentType(ld.employmentType),
+    careerLevel: null, workExperience: null, workTime: null,
+    remoteStatus: null, remoteStatusKey: null,
+    salary: salaryText(ld.baseSalary),
+    city: nullIfBlank(decodeEntities(a.addressLocality)),
+    region: normalizeRegion(a.addressRegion),
+    country: normalizeCountry(a.addressCountry),
+    postalCode: normalizePostalCode(a.postalCode),
+    streetAddress: nullIfBlank(decodeEntities(a.streetAddress)),
+    companyName: nullIfBlank(decodeEntities(ld.hiringOrganization?.name)),
+    versionId: null,
+    applyUrl: null,
+    note: null,
+  };
+}
 
-  if (tenant.platform === PLATFORM.BOARD) {
-    const ld = jsonLdJobPosting(html);
-    if (!ld) return { url, detailOk: false, note: 'no JSON-LD JobPosting' };
-    const a = firstAddress(ld.jobLocation) ?? {};
-    return {
-      url, detailOk: true,
-      title: nullIfBlank(decodeEntities(ld.title)) ?? listing.title ?? null,
-      descriptionHtml: nullIfBlank(ld.description),
-      descriptionText: ld.description ? htmlToText(ld.description) : null,
-      datePosted: toIso(ld.datePosted),
-      validThrough: toIso(ld.validThrough),
-      employmentType: normalizeEmploymentType(ld.employmentType),
-      careerLevel: null, workExperience: null, workTime: null,
-      remoteStatus: null, remoteStatusKey: null,
-      salary: salaryText(ld.baseSalary),
-      city: nullIfBlank(decodeEntities(a.addressLocality)),
-      region: normalizeRegion(a.addressRegion),
-      country: normalizeCountry(a.addressCountry),
-      postalCode: normalizePostalCode(a.postalCode),
-      streetAddress: nullIfBlank(decodeEntities(a.streetAddress)),
-      companyName: nullIfBlank(decodeEntities(ld.hiringOrganization?.name)),
-      versionId: null,
-      applyUrl: null,
-      note: null,
-    };
-  }
-
-  const j = nextDataJob(html);
-  if (!j) return { url, detailOk: false, note: 'no context.job in page' };
+function fromCareerJob(url, j, listing) {
   return {
     url, detailOk: true,
     title: nullIfBlank(decodeEntities(j.title)) ?? listing.title ?? null,
@@ -123,8 +113,94 @@ export async function fetchJobDetail(tenant, listing) {
   };
 }
 
+function parseDetail(platform, url, html, listing) {
+  if (platform === PLATFORM.BOARD) {
+    const ld = jsonLdJobPosting(html);
+    return ld ? fromBoardLd(url, ld, listing) : { url, detailOk: false, note: 'no JSON-LD JobPosting' };
+  }
+  const j = nextDataJob(html);
+  return j ? fromCareerJob(url, j, listing) : { url, detailOk: false, note: 'no context.job in page' };
+}
+
+/**
+ * `detailHost`, when given, is the board host resolved for this tenant. The
+ * primary (career) URL is still tried first because the career stack carries
+ * fields the board does not -- versionId, remoteStatusKey, careerLevel.
+ */
+export async function fetchJobDetail(tenant, listing, { detailHost = null } = {}) {
+  const url = absoluteJobUrl(tenant, listing);
+  const opts = {
+    ua: config.browserUA, timeoutMs: 45_000, label: `detail ${listing.jobId}`,
+    headers: { 'accept-language': 'de-DE,de;q=0.9,en;q=0.8' },
+  };
+
+  let note = null;
+  try {
+    const { text } = await requestText(url, opts);
+    const parsed = parseDetail(tenant.platform, url, text, listing);
+    if (parsed.detailOk) return parsed;
+    note = parsed.note;
+  } catch (err) { note = err.message; }
+
+  if (detailHost) {
+    const boardUrl = boardJobUrl(detailHost, listing.jobId);
+    try {
+      const { text } = await requestText(boardUrl, opts);
+      const ld = jsonLdJobPosting(text);
+      if (ld) return fromBoardLd(boardUrl, ld, listing);
+      note = `${note}; board fallback: no JobPosting`;
+    } catch (err) { note = `${note}; board fallback: ${err.message}`; }
+  }
+  return { url, detailOk: false, note };
+}
+
 export function absoluteJobUrl(tenant, listing) {
   if (listing.url?.startsWith('http')) return listing.url;
   const path = listing.url ?? '';
-  return `https://${tenant.host}${path.startsWith('/') ? '' : '/'}${path}`;
+  // A tenant on its own domain serves the job page there; the *.softgarden.io
+  // host can 404 for it (jdsports.softgarden.io does, jobs.jdsports.de does not).
+  const host = tenant.customDomain || tenant.host;
+  // `new URL` rather than concatenation so the "./jobs/.." and "../job/.." that
+  // board pages emit collapse instead of being stored literally.
+  return new URL(path.startsWith('/') ? path : `/${path}`, `https://${host}`).href;
+}
+
+export const boardJobUrl = (host, jobId) => `https://${host}/job/${jobId}`;
+
+/**
+ * Hosts that might serve this tenant's job pages, best first.
+ *
+ * Some career pages are "landing" projects (context.projectRole === 'landing'):
+ * the widget lists their jobs and even reports a /jobs/<id>/<slug>/ link, but
+ * the landing app has no job route, so every one of those URLs 404s. The
+ * postings are served by the company's own board instead, under a shorter
+ * slug -- ueber-uns-schuelerhilfe is served by schuelerhilfe.softgarden.io.
+ * Dropping leading slug segments finds it, and we only ever accept a candidate
+ * that actually returns a JobPosting for a real job id.
+ */
+export function detailHostCandidates(slug) {
+  const parts = String(slug ?? '').split('-').filter(Boolean);
+  const out = [];
+  for (let i = 0; i < parts.length; i++) {
+    const cand = parts.slice(i).join('-');
+    if (cand && !out.includes(cand)) out.push(`${cand}.softgarden.io`);
+  }
+  return out;
+}
+
+/**
+ * Find the board host serving `sampleJobId`, or null. Verified by fetching a
+ * real posting -- never inferred from the name alone.
+ */
+export async function resolveDetailHost(tenant, sampleJobId, { maxTries = 6 } = {}) {
+  for (const host of detailHostCandidates(tenant.slug).slice(0, maxTries)) {
+    try {
+      const { text } = await requestText(boardJobUrl(host, sampleJobId), {
+        ua: config.browserUA, timeoutMs: 30_000, label: `resolve ${host}`,
+        headers: { 'accept-language': 'de-DE,de;q=0.9,en;q=0.8' },
+      });
+      if (jsonLdJobPosting(text)) return host;
+    } catch { /* 404 for this candidate; try the next */ }
+  }
+  return null;
 }

@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { log } from '../logger.js';
 import { createSqliteStore } from './sqlite.js';
 import { createPostgresStore } from './postgres.js';
+import { syncColumns } from './migrate.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -18,6 +19,9 @@ export async function createStore({ url = config.dbUrl, path = config.dbPath, mi
   if (migrate) {
     const schema = await readFile(join(HERE, `schema.${store.dialect}.sql`), 'utf8');
     await store.exec(schema);
+    // CREATE TABLE IF NOT EXISTS is a no-op on an existing database, so columns
+    // added to the schema after a release need an explicit ALTER.
+    await syncColumns(store, schema);
   }
   return store;
 }

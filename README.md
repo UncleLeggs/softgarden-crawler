@@ -90,6 +90,31 @@ widget detail endpoint either: `/widgets/job-ad`, `/widgets/job-detail/job-ad` a
 `versionId` matters because the feeds have **no per-job `dateModified`** — only a feed-level one.
 It is the exact change signal on the career stack; elsewhere a content hash stands in.
 
+#### When a tenant cannot serve its own job pages
+
+Some career pages advertise jobs they have no route for. The first full run lost 1,288
+descriptions this way, concentrated in 11 of 761 tenants:
+
+- A **landing-role project** (`context.projectRole === 'landing'`) lists jobs through the widget
+  and even reports a `/jobs/<id>/<slug>/` link for each, but the landing app has no job route, so
+  every one of those URLs 404s. `ueber-uns-schuelerhilfe` is 1,047 jobs of exactly this.
+- A few `root` career tenants publish their postings only on the legacy board.
+
+Both are the same shape — the postings live on a `*.softgarden.io` board under a shorter slug —
+so `resolveDetailHost` drops leading slug segments (`ueber-uns-schuelerhilfe` → `schuelerhilfe`)
+and **verifies each candidate by fetching a real job id** before accepting it. Nothing is
+inferred from the name alone: a host only counts if it returns a `JobPosting`. The result is
+stored in `tenants.detail_host`, so later runs skip the search, and resolution is attempted only
+for a tenant whose details *all* failed — a healthy tenant pays nothing.
+
+A job ID is not globally addressable, by the way: `schuelerhilfe.softgarden.io/job/<id>` serves
+it, and every other board host 404s the same ID. Only the owning tenant can answer.
+
+When a detail fetch still fails, the reason is written to `jobs.detail_note` and shown by
+`npm run stats`. An earlier version produced that reason and dropped it, because the column did
+not exist — so a whole run's failures left no trace and had to be re-diagnosed against the live
+sites. `syncColumns` now adds schema columns to databases that predate them.
+
 ### Feeds: for timing, not for truth
 
 `{host}/jobs.feed.json` is read only to answer "did this customer change at all". Its values are
@@ -247,6 +272,11 @@ what the weekly schedule relies on.
 - Salary is present in the payload but usually empty.
 - The legacy board renders every job server-side, so its counts are exact — but if Softgarden
   ever switches it to real server-side pagination, `fetchBoardListings` needs a page loop.
+- A small number of board job pages (42 of 29,897 in the last full run, mostly one tenant) carry
+  **no JSON-LD at all**; their description sits in `div.free-text` / `div.section-content__body`.
+  Scraping those class names is deliberately *not* implemented: it is 0.14% of rows, and a
+  regex over nested `<div>`s is the kind of selector that rots silently. They are recorded as
+  `no JSON-LD JobPosting` in `detail_note` and counted, which is the honest alternative.
 
 ## License
 

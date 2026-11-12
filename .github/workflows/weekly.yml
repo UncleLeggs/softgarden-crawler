@@ -18,6 +18,10 @@ jobs:
   crawl:
     runs-on: ubuntu-latest
     timeout-minutes: 330
+    # Job-level so the deploy steps can gate on it: a fork or a clone without
+    # the secret runs the crawl and simply skips publishing.
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
       - uses: actions/checkout@v7
 
@@ -62,6 +66,24 @@ jobs:
         run: |
           node --disable-warning=ExperimentalWarning src/cli.js export --what tenants --out out/tenants.csv
           node --disable-warning=ExperimentalWarning src/cli.js export --what jobs --out out/jobs.csv
+
+      # Publication is a separate artifact from the crawl database: it strips the
+      # description text and drops job_payloads, and --min-jobs refuses to build
+      # a hollow snapshot, so a broken crawl leaves the previous deploy serving.
+      - name: Build the public snapshot
+        run: npm run build:public -- --min-jobs=20000
+
+      - name: Set up flyctl
+        if: env.FLY_API_TOKEN != ''
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy the dashboard
+        if: env.FLY_API_TOKEN != ''
+        run: flyctl deploy --remote-only --config fly.toml
+
+      - name: Note when publishing was skipped
+        if: env.FLY_API_TOKEN == ''
+        run: echo "::notice::FLY_API_TOKEN is not set, so the dashboard was not deployed."
 
       - name: Upload artifacts
         if: always()

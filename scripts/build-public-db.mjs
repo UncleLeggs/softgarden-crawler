@@ -18,9 +18,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { copyFileSync, statSync, rmSync, existsSync } from 'node:fs';
 import { createStore } from '../src/storage/index.js';
 
-const [src, dest] = process.argv.slice(2);
+const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+const [src, dest] = args;
+const minArg = process.argv.find((a) => a.startsWith('--min-jobs='));
+const minJobs = minArg ? Number(minArg.split('=')[1]) : 0;
 if (!src || !dest) {
-  console.error('usage: node scripts/build-public-db.mjs <source.db> <dest.db>');
+  console.error('usage: node scripts/build-public-db.mjs <source.db> <dest.db> [--min-jobs=N]');
   process.exit(2);
 }
 const mb = (p) => (statSync(p).size / 1048576).toFixed(1);
@@ -46,6 +49,9 @@ db.exec(`UPDATE jobs SET has_description = CASE
 const kept = count('SELECT COUNT(*) n FROM jobs WHERE has_description = 1');
 
 db.exec('UPDATE jobs SET description_html = NULL, description_text = NULL');
+// job_payloads holds the verbatim source JSON -- descriptions and all -- so it
+// is dropped wholesale rather than filtered.
+db.exec('DROP TABLE IF EXISTS job_payloads');
 db.exec('VACUUM');
 
 // Verify: no email- or phone-shaped string may remain in any text column.
@@ -67,8 +73,22 @@ for (const col of TEXT) {
 }
 const stillText = count(`SELECT COUNT(*) n FROM jobs
   WHERE description_html IS NOT NULL OR description_text IS NOT NULL`);
+const payloadTables = count(
+  "SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='job_payloads'");
+const openJobs = count('SELECT COUNT(*) n FROM jobs WHERE is_open = 1');
 
 db.close();
+
+if (payloadTables) {
+  console.error('REFUSING: job_payloads still present -- it holds the raw descriptions');
+  process.exit(1);
+}
+if (minJobs && openJobs < minJobs) {
+  // A snapshot this small means the crawl broke, not that the market emptied.
+  // Better to keep serving the previous deploy than to publish a hollow one.
+  console.error(`REFUSING: ${openJobs} open jobs is below --min-jobs=${minJobs}`);
+  process.exit(1);
+}
 
 if (stillText) { console.error(`REFUSING: ${stillText} rows still carry description text`); process.exit(1); }
 if (leaks.length) {
@@ -77,4 +97,5 @@ if (leaks.length) {
   process.exit(1);
 }
 console.log(`stripped descriptions; has_description preserved for ${kept} jobs`);
-console.log(`wrote ${dest} (${mb(dest)} MB) -- no description text, no contact-shaped values`);
+console.log(`wrote ${dest} (${mb(dest)} MB) -- ${openJobs} open jobs, no description text, `
+  + 'no raw payloads, no contact-shaped values');

@@ -82,6 +82,12 @@ function fromBoardLd(url, ld, listing) {
     companyName: nullIfBlank(decodeEntities(ld.hiringOrganization?.name)),
     versionId: null,
     applyUrl: null,
+    sourceCreatedAt: null,
+    sourceUpdatedAt: null,
+    sourceHash: nullIfBlank(typeof ld.identifier === 'string' ? ld.identifier : ld.identifier?.value),
+    published: null, imported: null, jobBoardType: null,
+    totalApplications: null, projectNumber: null, additionalLocations: null,
+    raw: { source: 'board', payload: ld },
     note: null,
   };
 }
@@ -109,6 +115,20 @@ function fromCareerJob(url, j, listing) {
     companyName: nullIfBlank(decodeEntities(j.company)),
     versionId: numOrNull(j.versionId),
     applyUrl: nullIfBlank(j.applyOnlineLink),
+    // context.job carries 47 keys. These are the ones worth querying as
+    // columns; `raw` keeps the remainder so recovering a field we did not think
+    // to map never means re-crawling 30k pages.
+    sourceCreatedAt: toIso(j.createdAt),
+    sourceUpdatedAt: toIso(j.updatedAt),
+    sourceHash: nullIfBlank(j.hash),
+    published: typeof j.published === 'boolean' ? j.published : null,
+    imported: typeof j.imported === 'boolean' ? j.imported : null,
+    jobBoardType: nullIfBlank(j.jobBoardType),
+    totalApplications: numOrNull(j.totalApplications),
+    projectNumber: numOrNull(j.sgJobAdProjectNumber),
+    additionalLocations: Array.isArray(j.additionalLocations) && j.additionalLocations.length
+      ? j.additionalLocations : null,
+    raw: { source: 'career', payload: j },
     note: null,
   };
 }

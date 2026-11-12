@@ -159,6 +159,12 @@ export async function runCrawl({
         const outcome = await repo.upsertJob(store, tenant.slug, merged);
         if (outcome === 'new') stats.jobsNew++;
         else if (outcome === 'updated') stats.jobsUpdated++;
+        // Only on a change: an unchanged job's payload is already stored, and
+        // rewriting 30k identical blobs every week would be pure churn.
+        if (config.storeRaw && detail?.raw) {
+          await repo.putPayload(store, tenant.slug, listing.jobId,
+            detail.raw.source, detail.raw.payload, { overwrite: outcome !== 'unchanged' });
+        }
       }
 
       for (const row of await repo.missingJobs(store, tenant.slug, jobs.map((j) => j.jobId))) {

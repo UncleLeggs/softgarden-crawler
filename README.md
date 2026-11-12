@@ -89,6 +89,29 @@ widget detail endpoint either: `/widgets/job-ad`, `/widgets/job-detail/job-ad` a
 
 `versionId` matters because the feeds have **no per-job `dateModified`** — only a feed-level one.
 It is the exact change signal on the career stack; elsewhere a content hash stands in.
+(`context.job` does also carry its own `createdAt`/`updatedAt`, which the feeds do not expose —
+those are stored too, but `versionId` remains what change detection compares.)
+
+### Everything else the payload carries
+
+`context.job` has **47 keys** and this mapped about 20 of them, which threw away `createdAt`,
+`updatedAt`, `published`, `imported`, `jobBoardType`, `totalApplications`, `sgJobAdProjectNumber`,
+`additionalLocations`, the ATS's own content `hash`, and more. The useful ones are now columns.
+The rest is not lost either: `job_payloads` keeps the verbatim source JSON per job, as text
+rather than compressed so SQL can read into it.
+
+```sql
+-- a field nobody thought to map, straight out of the stored payload
+SELECT job_id,
+       json_extract(payload, '$.category')   AS category,
+       json_extract(payload, '$.coords.lat') AS lat
+FROM job_payloads WHERE source = 'career';
+```
+
+It costs roughly 9 KB per career job and 4 KB per board job, which the dashboard never reads —
+that is the point: recovering a field later should not mean re-crawling 30,000 pages.
+`SG_STORE_RAW=0` turns it off. Payloads are written when a job is new or changed, and otherwise
+only if absent, so a weekly run does not rewrite 30k identical blobs.
 
 #### When a tenant cannot serve its own job pages
 
@@ -266,8 +289,25 @@ The live dashboard serves a **publication-safe snapshot**, not the crawl databas
 ```bash
 npm run build:public      # data/softgarden.db -> data/public.db
 fly auth login            # once
-fly deploy                # builds Dockerfile.public, ~17 MB of data baked in
+fly launch --copy-config  # once: creates the app from fly.toml
+fly deploy                # builds Dockerfile.public, ~18 MB of data baked in
 ```
+
+### Deploying on every weekly run
+
+`weekly.yml` chains it: crawl → export → build the snapshot → `flyctl deploy`. To enable it,
+create a deploy token and store it as a repository secret:
+
+```bash
+fly tokens create deploy -a softgarden-crawler   # then add as secret FLY_API_TOKEN
+```
+
+Without that secret the crawl still runs and simply logs that publishing was skipped, so a fork
+is not expected to hold deploy credentials. The publish step runs `--min-jobs=20000`: a snapshot
+below that floor means the crawl broke rather than the market emptying, and it is better to keep
+serving the previous deploy than to publish a hollow one.
+
+`job_payloads` is dropped from the published copy, not filtered — it holds the raw descriptions.
 
 `scripts/build-public-db.mjs` strips `description_html` and `description_text` and refuses to
 emit a file that still contains them, or that matches an email or phone pattern in any other

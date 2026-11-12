@@ -91,14 +91,19 @@ export async function upsertJob(store, tenantSlug, job) {
          date_posted, valid_through, employment_type, career_level, work_experience, work_time,
          remote_status, remote_key, salary, city, region, country, postal_code, street_address,
          lat, lng, categories, company_name, apply_url, version_id, content_hash, is_open,
-         detail_ok, has_description, detail_note, first_seen, last_seen)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?)`,
+         detail_ok, has_description, detail_note, source_created_at, source_updated_at, source_hash, published, imported, job_board_type, total_applications, project_number, additional_locations, first_seen, last_seen)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [tenantSlug, jobId, job.url, job.title, job.descriptionHtml, job.descriptionText,
         job.datePosted, job.validThrough, job.employmentType, job.careerLevel, job.workExperience,
         job.workTime, job.remoteStatus, job.remoteStatusKey, job.salary, job.city, job.region,
         job.country, job.postalCode, job.streetAddress, job.lat, job.lng,
         job.categories ? JSON.stringify(job.categories) : null, job.companyName, job.applyUrl,
-        job.versionId, hash, job.detailOk ? 1 : 0, hasDescription(job), job.detailNote ?? null, ts, ts]);
+        job.versionId, hash, job.detailOk ? 1 : 0, hasDescription(job), job.detailNote ?? null,
+        job.sourceCreatedAt ?? null, job.sourceUpdatedAt ?? null, job.sourceHash ?? null,
+        job.published ?? null, job.imported ?? null, job.jobBoardType ?? null,
+        job.totalApplications ?? null, job.projectNumber ?? null,
+        job.additionalLocations ? JSON.stringify(job.additionalLocations) : null,
+        ts, ts]);
     return 'new';
   }
 
@@ -108,8 +113,29 @@ export async function upsertJob(store, tenantSlug, job) {
     : hash !== prev.content_hash;
 
   if (!changed && Number(prev.is_open) === 1) {
-    await store.run('UPDATE jobs SET last_seen = ? WHERE tenant_slug = ? AND job_id = ?',
-      [ts, tenantSlug, jobId]);
+    // Backfill only. COALESCE puts the EXISTING value first -- the opposite of
+    // the update branch below -- so this fills gaps and overwrites nothing.
+    // Without it, a column added to the schema would stay NULL on every job
+    // that does not happen to change, which for stable listings is forever.
+    await store.run(
+      `UPDATE jobs SET last_seen = ?,
+         source_created_at = COALESCE(source_created_at, ?),
+         source_updated_at = COALESCE(source_updated_at, ?),
+         source_hash = COALESCE(source_hash, ?),
+         published = COALESCE(published, ?),
+         imported = COALESCE(imported, ?),
+         job_board_type = COALESCE(job_board_type, ?),
+         total_applications = COALESCE(total_applications, ?),
+         project_number = COALESCE(project_number, ?),
+         additional_locations = COALESCE(additional_locations, ?),
+         has_description = COALESCE(has_description, ?)
+       WHERE tenant_slug = ? AND job_id = ?`,
+      [ts, job.sourceCreatedAt ?? null, job.sourceUpdatedAt ?? null, job.sourceHash ?? null,
+        job.published ?? null, job.imported ?? null, job.jobBoardType ?? null,
+        job.totalApplications ?? null, job.projectNumber ?? null,
+        job.additionalLocations ? JSON.stringify(job.additionalLocations) : null,
+        job.detailOk ? hasDescription(job) : null,
+        tenantSlug, jobId]);
     return 'unchanged';
   }
 
@@ -127,6 +153,15 @@ export async function upsertJob(store, tenantSlug, job) {
        detail_ok = CASE WHEN ? = 1 THEN 1 ELSE detail_ok END,
        has_description = CASE WHEN ? = 1 THEN 1 ELSE COALESCE(has_description, 0) END,
        detail_note = CASE WHEN ? = 1 THEN NULL ELSE ? END,
+       source_created_at = COALESCE(?, source_created_at),
+       source_updated_at = COALESCE(?, source_updated_at),
+       source_hash = COALESCE(?, source_hash),
+       published = COALESCE(?, published),
+       imported = COALESCE(?, imported),
+       job_board_type = COALESCE(?, job_board_type),
+       total_applications = COALESCE(?, total_applications),
+       project_number = COALESCE(?, project_number),
+       additional_locations = COALESCE(?, additional_locations),
        last_seen = ?
      WHERE tenant_slug = ? AND job_id = ?`,
     [job.url, job.title, job.descriptionHtml, job.descriptionText, job.datePosted,
@@ -135,8 +170,32 @@ export async function upsertJob(store, tenantSlug, job) {
       job.postalCode, job.streetAddress, job.lat, job.lng,
       job.categories ? JSON.stringify(job.categories) : null, job.companyName, job.applyUrl,
       job.versionId, hash, job.detailOk ? 1 : 0, hasDescription(job),
-      job.detailOk ? 1 : 0, job.detailNote ?? null, ts, tenantSlug, jobId]);
+      job.detailOk ? 1 : 0, job.detailNote ?? null,
+        job.sourceCreatedAt ?? null, job.sourceUpdatedAt ?? null, job.sourceHash ?? null,
+        job.published ?? null, job.imported ?? null, job.jobBoardType ?? null,
+        job.totalApplications ?? null, job.projectNumber ?? null,
+        job.additionalLocations ? JSON.stringify(job.additionalLocations) : null,
+      ts, tenantSlug, jobId]);
   return 'updated';
+}
+
+/**
+ * Keep the source payload verbatim. Written only when the job is new or changed,
+ * so a weekly run does not rewrite 30k unchanged blobs.
+ */
+export async function putPayload(store, tenantSlug, jobId, source, payload, { overwrite = true } = {}) {
+  const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  // Unchanged jobs still need a payload the first time this runs against an
+  // existing database, but rewriting 30k identical blobs weekly is churn --
+  // so an unchanged job inserts if absent and is otherwise left alone.
+  const onConflict = overwrite
+    ? 'DO UPDATE SET payload = excluded.payload, fetched_at = excluded.fetched_at'
+    : 'DO NOTHING';
+  await store.run(
+    `INSERT INTO job_payloads (tenant_slug, job_id, source, payload, fetched_at)
+     VALUES (?,?,?,?,?)
+     ON CONFLICT (tenant_slug, job_id, source) ${onConflict}`,
+    [tenantSlug, String(jobId), source, text, now()]);
 }
 
 /**

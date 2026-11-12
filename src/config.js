@@ -29,6 +29,10 @@ export const config = {
 
   pageSize: num(env.SG_PAGE_SIZE, 100), // widget rows per page
   detailLimit: num(env.SG_DETAIL_LIMIT, 0), // 0 = no cap
+  // Keep the verbatim source payload per job. Roughly +4 KB/job, which the
+  // dashboard never reads -- but it is what makes an unmapped field
+  // recoverable without re-crawling. SG_STORE_RAW=0 turns it off.
+  storeRaw: env.SG_STORE_RAW !== '0' && env.SG_STORE_RAW !== 'false',
 };
 
 // SURT keys are reversed-domain: acme.career.softgarden.de -> de,softgarden,career,acme)

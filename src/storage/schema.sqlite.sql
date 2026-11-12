@@ -49,6 +49,17 @@ CREATE TABLE IF NOT EXISTS jobs (
   detail_ok        INTEGER NOT NULL DEFAULT 0,
   first_seen       TEXT NOT NULL,
   last_seen        TEXT NOT NULL,
+  -- Fields the payload carries that the dashboard does not need. context.job
+  -- has 47 keys; mapping only the ones a chart used threw the rest away.
+  source_created_at TEXT,        -- the ATS's own createdAt
+  source_updated_at TEXT,        -- the ATS's own updatedAt: a real per-job timestamp
+  source_hash      TEXT,         -- the ATS's own content hash
+  published        INTEGER,
+  imported         INTEGER,      -- the ad was imported rather than authored here
+  job_board_type   TEXT,
+  total_applications INTEGER,
+  project_number   INTEGER,
+  additional_locations TEXT,     -- JSON array; a job can list more than one place
   has_description  INTEGER,       -- 1 when a description was captured; survives stripping the text
   detail_note      TEXT,          -- why a detail fetch failed; NULL when it succeeded
   closed_at        TEXT,
@@ -62,6 +73,18 @@ CREATE INDEX IF NOT EXISTS idx_jobs_posted  ON jobs(date_posted);
 CREATE INDEX IF NOT EXISTS idx_jobs_detail  ON jobs(is_open, detail_ok);
 
 -- One row per crawl run, for observability.
+-- Exactly what the source returned, kept so a field we did not think to map is
+-- still recoverable without re-crawling 30k pages. Stored as JSON text rather
+-- than compressed so SQL can read into it (json_extract / jsonb).
+CREATE TABLE IF NOT EXISTS job_payloads (
+  tenant_slug      TEXT NOT NULL,
+  job_id           TEXT NOT NULL,
+  source           TEXT NOT NULL,   -- 'career' | 'board' | 'widget'
+  payload          TEXT NOT NULL,
+  fetched_at       TEXT NOT NULL,
+  PRIMARY KEY (tenant_slug, job_id, source)
+);
+
 CREATE TABLE IF NOT EXISTS runs (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   mode          TEXT NOT NULL,

@@ -13,10 +13,10 @@ export class BlockedError extends Error {
 
 // Global limiter: caps in-flight requests AND requests per second. Both matter
 // here -- Cloudflare throttles on burst rate, not just concurrency.
-class Limiter {
+export class Limiter {
   #active = 0;
   #queue = [];
-  #last = 0;
+  #nextSlot = 0;
 
   constructor(concurrency, rps) {
     this.concurrency = Math.max(1, concurrency);
@@ -24,14 +24,23 @@ class Limiter {
   }
 
   async run(fn) {
-    if (this.#active >= this.concurrency) {
+    // `while`, not `if`: releasing a slot wakes a waiter, but a brand new caller
+    // can claim that slot before the waiter's continuation runs. A waiter that
+    // assumed the slot was still free would push #active past the ceiling.
+    while (this.#active >= this.concurrency) {
       await new Promise((resolve) => this.#queue.push(resolve));
     }
     this.#active++;
     try {
-      const wait = this.#last + this.minGap - Date.now();
+      // Claim this request's slot synchronously, BEFORE any await. Reading a
+      // deadline, sleeping, and only then stamping it lets every concurrent
+      // caller compute the same deadline and fire together -- which makes the
+      // real rate concurrency x rps rather than rps.
+      const now = Date.now();
+      const at = Math.max(now, this.#nextSlot);
+      this.#nextSlot = at + this.minGap;
+      const wait = at - now;
       if (wait > 0) await sleep(wait);
-      this.#last = Date.now();
       return await fn();
     } finally {
       this.#active--;

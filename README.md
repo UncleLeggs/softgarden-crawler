@@ -315,6 +315,13 @@ Actions -> weekly-crawl -> Run workflow -> mode: publish-only
 That restores the cached database, rebuilds the snapshot and deploys. Worth having: a deploy
 path only reachable through a two-hour crawl is one you cannot test or re-run.
 
+**There are two databases, and publish-only publishes the wrong one if you forget that.** Your
+working copy in `data/` and the Actions cache are separate states. The first publish-only run
+here deployed 95.7% coverage over a dashboard that had been showing 99.85%, because the
+description recovery had been done locally and the cache still held the pre-recovery crawl. The
+numbers were not wrong — they were faithfully the cache's. Publish from your local copy with
+`fly deploy --remote-only --ha=false`; use publish-only when the cache is the state you want.
+
 Without that secret the crawl still runs and simply logs that publishing was skipped, so a fork
 is not expected to hold deploy credentials. The publish step runs `--min-jobs=20000`: a snapshot
 below that floor means the crawl broke rather than the market emptying, and it is better to keep

@@ -306,6 +306,15 @@ fly tokens create deploy -a softgarden-crawler   # then add as secret FLY_API_TO
 zero-downtime rollout, which doubles the footprint of a read-only dashboard that can afford a
 second of resume.
 
+A deploy can be run on its own, without a crawl:
+
+```
+Actions -> weekly-crawl -> Run workflow -> mode: publish-only
+```
+
+That restores the cached database, rebuilds the snapshot and deploys. Worth having: a deploy
+path only reachable through a two-hour crawl is one you cannot test or re-run.
+
 Without that secret the crawl still runs and simply logs that publishing was skipped, so a fork
 is not expected to hold deploy credentials. The publish step runs `--min-jobs=20000`: a snapshot
 below that floor means the crawl broke rather than the market emptying, and it is better to keep

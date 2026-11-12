@@ -9,6 +9,11 @@ on:
       crawls:
         description: 'Common Crawl snapshots to merge'
         default: '1'
+      mode:
+        description: 'full = crawl then publish; publish-only = rebuild and deploy the cached database'
+        default: 'full'
+        type: choice
+        options: ['full', 'publish-only']
 
 concurrency:
   group: weekly-crawl
@@ -49,7 +54,11 @@ jobs:
 
       - run: npm test
 
+      # publish-only re-publishes the cached database without re-crawling: the
+      # deploy leg is then runnable and testable on its own, instead of only
+      # reachable through a two-hour crawl.
       - name: Weekly crawl
+        if: inputs.mode != 'publish-only'
         env:
           SG_CRAWLS: ${{ github.event.inputs.crawls || '1' }}
           SG_CONCURRENCY: '3'

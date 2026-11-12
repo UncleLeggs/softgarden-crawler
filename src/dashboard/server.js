@@ -48,6 +48,9 @@ async function summary(store) {
     alerts: s.recentAlerts.map((a) => ({
       slug: a.tenant_slug, kind: a.kind, detail: a.detail, createdAt: a.created_at,
     })),
+    // Why descriptions are missing. The point of recording a reason is that
+    // somebody sees it, so it belongs here and not only in the CLI.
+    detailFailures: s.detailFailures.map((d) => ({ reason: d.reason, jobs: Number(d.n) })),
   };
 }
 

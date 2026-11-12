@@ -170,6 +170,13 @@
     </div>
 
     <div class="card span-2">
+      <h2>Missing descriptions</h2>
+      <p class="hint">Why a detail fetch came back without a description. Blank reasons are rows
+        recorded before the crawler stored one.</p>
+      <div id="failures-table"></div>
+    </div>
+
+    <div class="card span-2">
       <h2>Alerts</h2>
       <p class="hint">Sharp job-count drops — usually a crawl problem, not a customer closing roles.</p>
       <div id="alerts-table"></div>
@@ -344,11 +351,14 @@ function table(mount, cols, rows, emptyMsg) {
 let DATA = null;
 
 function tiles(d) {
-  const pct = d.kpis.jobsOpen ? Math.round((d.kpis.withDescription / d.kpis.jobsOpen) * 100) : 0;
+  // One decimal, not Math.round: 29,852/29,897 is 99.85%, and rounding that
+  // to "100%" would claim a completeness the data does not have.
+  const ratio = d.kpis.jobsOpen ? (d.kpis.withDescription / d.kpis.jobsOpen) * 100 : 0;
+  const pct = `${(Math.floor(ratio * 10) / 10).toFixed(1)}%`;
   const items = [
     { label: 'Live tenants', value: d.kpis.tenantsLive, foot: `${fmt(d.kpis.tenantsKnown)} discovered` },
     { label: 'Open jobs', value: d.kpis.jobsOpen, foot: `${fmt(d.kpis.jobsClosed)} closed` },
-    { label: 'With descriptions', value: d.kpis.withDescription, foot: `${pct}% of open jobs` },
+    { label: 'With descriptions', value: d.kpis.withDescription, foot: `${pct} of open jobs` },
     { label: 'Branded domains', value: d.kpis.brandedDomains, foot: 'own domain via redirect' },
   ];
   document.getElementById('tiles').innerHTML = items.map((i) => `
@@ -405,6 +415,11 @@ function renderTables(d) {
     { label: 'Closed', num: true, render: (r) => fmt(r.jobsClosed) },
     { label: 'Details', num: true, render: (r) => fmt(r.detailsOk) },
   ], [...d.runs].reverse(), 'No runs recorded yet.');
+
+  table(document.getElementById('failures-table'), [
+    { label: 'Reason', render: (f) => esc(f.reason) },
+    { label: 'Jobs', num: true, render: (f) => fmt(f.jobs) },
+  ], d.detailFailures ?? [], 'Every open job has a description.');
 
   table(document.getElementById('alerts-table'), [
     { label: 'When', render: (a) => `<span class="mono">${esc((a.createdAt ?? '').replace('T', ' ').slice(0, 19))}</span>` },

@@ -19,7 +19,8 @@
     "weekly": "node --disable-warning=ExperimentalWarning src/cli.js weekly",
     "schedule": "node --disable-warning=ExperimentalWarning src/cli.js schedule",
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
-    "dashboard": "node --disable-warning=ExperimentalWarning src/cli.js dashboard"
+    "dashboard": "node --disable-warning=ExperimentalWarning src/cli.js dashboard",
+    "build:public": "node --disable-warning=ExperimentalWarning scripts/build-public-db.mjs data/softgarden.db data/public.db"
   },
   "keywords": [
     "scraping",

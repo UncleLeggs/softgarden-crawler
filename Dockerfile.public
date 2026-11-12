@@ -1,0 +1,34 @@
+# The public dashboard: the app plus a publication-safe snapshot baked in.
+#
+# Built from data/public.db, which scripts/build-public-db.mjs produces by
+# stripping both description columns (180 MB of text, 26% of it containing an
+# email address and 36% a phone number) while preserving jobs.has_description
+# so coverage still reports. Nothing here is crawled at runtime; the container
+# is a read-only view of one snapshot.
+FROM node:22-slim
+
+ENV NODE_ENV=production \
+    SG_DB=/app/data/public.db \
+    SG_PORT=8080 \
+    NODE_OPTIONS=--disable-warning=ExperimentalWarning
+
+WORKDIR /app
+
+COPY package.json ./
+RUN npm install --omit=dev --omit=optional --no-audit --no-fund
+
+COPY src ./src
+# Overrides the `data` entry in .dockerignore for this one file.
+COPY data/public.db ./data/public.db
+
+# SQLite in WAL mode creates -wal and -shm beside the database even to read it,
+# so the directory has to be writable by the runtime user.
+RUN chown -R node:node /app/data
+USER node
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.SG_PORT||8080)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "src/cli.js", "dashboard"]

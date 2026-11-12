@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   detail_ok        SMALLINT NOT NULL DEFAULT 0,
   first_seen       TEXT NOT NULL,
   last_seen        TEXT NOT NULL,
+  has_description  INTEGER,       -- 1 when a description was captured; survives stripping the text
   detail_note      TEXT,          -- why a detail fetch failed; NULL when it succeeded
   closed_at        TEXT,
   PRIMARY KEY (tenant_slug, job_id)

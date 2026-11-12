@@ -209,3 +209,37 @@ test('stats groups missing descriptions by recorded reason', async () => {
     [['HTTP 404', 2], ['no JSON-LD JobPosting', 1]]);
   await store.close();
 });
+
+/**
+ * The published dashboard serves a copy with both description columns stripped,
+ * because 26% of descriptions carry an email address. Coverage therefore cannot
+ * be derived from the text; has_description records the fact separately.
+ */
+test('description coverage survives stripping the description text', async () => {
+  const store = await freshStore();
+  await upsertTenant(store, tenant, 'career.softgarden.de');
+  await upsertJob(store, 'acme', { jobId: '1', title: 'A', descriptionText: 'long body', detailOk: true });
+  await upsertJob(store, 'acme', { jobId: '2', title: 'B', detailOk: false });
+  assert.equal((await stats(store)).withDescription, 1);
+
+  // Exactly what scripts/build-public-db.mjs does.
+  await store.run('UPDATE jobs SET description_html = NULL, description_text = NULL');
+  assert.equal((await stats(store)).withDescription, 1,
+    'coverage must come from has_description once the text is gone');
+  await store.close();
+});
+
+test('has_description is set from the text and never regresses on a listing-only pass', async () => {
+  const store = await freshStore();
+  await upsertTenant(store, tenant, 'career.softgarden.de');
+  await upsertJob(store, 'acme', { jobId: '1', title: 'A', descriptionText: 'body', versionId: 1, detailOk: true });
+  assert.equal(Number((await store.get('SELECT has_description h FROM jobs WHERE job_id = ?', ['1'])).h), 1);
+
+  await upsertJob(store, 'acme', { jobId: '1', title: 'A', versionId: 2, detailOk: false });
+  assert.equal(Number((await store.get('SELECT has_description h FROM jobs WHERE job_id = ?', ['1'])).h), 1,
+    'a listing-only pass must not clear it');
+
+  await upsertJob(store, 'acme', { jobId: '2', title: 'B', detailOk: false });
+  assert.equal(Number((await store.get('SELECT has_description h FROM jobs WHERE job_id = ?', ['2'])).h), 0);
+  await store.close();
+});

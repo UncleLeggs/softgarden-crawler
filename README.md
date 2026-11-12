@@ -259,6 +259,29 @@ Details are one request per job. At 30k open jobs and a deliberately polite rate
 pass is an overnight job — use `--detail-limit` or the incremental `details` command, which is
 what the weekly schedule relies on.
 
+## Deploying the public dashboard
+
+The live dashboard serves a **publication-safe snapshot**, not the crawl database:
+
+```bash
+npm run build:public      # data/softgarden.db -> data/public.db
+fly auth login            # once
+fly deploy                # builds Dockerfile.public, ~17 MB of data baked in
+```
+
+`scripts/build-public-db.mjs` strips `description_html` and `description_text` and refuses to
+emit a file that still contains them, or that matches an email or phone pattern in any other
+text column. That is not cosmetic: descriptions are 180 MB of the 220 MB, and in a sample of
+4,000 of them **26% contained an email address and 36% a phone number** — recruiter contact
+details belonging to other companies, which do not belong on a public URL. The dashboard never
+rendered that text anyway; it shows aggregates and links out to the original posting.
+
+Coverage still reports after the strip because `jobs.has_description` records the fact
+separately from the text — that is the reason the column exists.
+
+The deployed container is read-only: no volume, no scheduler, no crawling. Publishing newer
+numbers is `npm run build:public && fly deploy`.
+
 ## Limits, stated plainly
 
 - Coverage is bounded by the Common Crawl snapshot. `home24` is a live Softgarden customer that

@@ -1,0 +1,33 @@
+# Public dashboard deployment.
+#
+# Serves data/public.db, the publication-safe snapshot built by
+# scripts/build-public-db.mjs. The container never crawls: it is a read-only
+# view of one run, so there is no volume and no scheduler here. Re-publishing
+# newer numbers means rebuilding the snapshot and deploying again.
+#
+#   npm run build:public && fly deploy
+app = "softgarden-crawler"
+primary_region = "fra"        # Frankfurt: the data and its audience are German
+
+[build]
+  dockerfile = "Dockerfile.public"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Suspend rather than stop: resume is near-instant, so a link in an email
+  # still opens quickly while an idle machine costs nothing.
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "5s"
+  method = "GET"
+  path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

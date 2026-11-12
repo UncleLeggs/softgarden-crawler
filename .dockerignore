@@ -5,6 +5,7 @@ data
 out
 .cc-cache
 *.db
+!data/public.db
 *.db-wal
 *.db-journal
 test

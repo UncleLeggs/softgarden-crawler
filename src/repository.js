@@ -73,6 +73,9 @@ export async function getTenants(store, { liveOnly = true, platform = null, slug
   return rows.map(rowToTenant);
 }
 
+const hasDescription = (job) =>
+  (job.descriptionText ?? job.descriptionHtml ?? '').trim() ? 1 : 0;
+
 /** Returns 'new' | 'updated' | 'unchanged'. */
 export async function upsertJob(store, tenantSlug, job) {
   const ts = now();
@@ -88,14 +91,14 @@ export async function upsertJob(store, tenantSlug, job) {
          date_posted, valid_through, employment_type, career_level, work_experience, work_time,
          remote_status, remote_key, salary, city, region, country, postal_code, street_address,
          lat, lng, categories, company_name, apply_url, version_id, content_hash, is_open,
-         detail_ok, detail_note, first_seen, last_seen)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?)`,
+         detail_ok, has_description, detail_note, first_seen, last_seen)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?)`,
       [tenantSlug, jobId, job.url, job.title, job.descriptionHtml, job.descriptionText,
         job.datePosted, job.validThrough, job.employmentType, job.careerLevel, job.workExperience,
         job.workTime, job.remoteStatus, job.remoteStatusKey, job.salary, job.city, job.region,
         job.country, job.postalCode, job.streetAddress, job.lat, job.lng,
         job.categories ? JSON.stringify(job.categories) : null, job.companyName, job.applyUrl,
-        job.versionId, hash, job.detailOk ? 1 : 0, job.detailNote ?? null, ts, ts]);
+        job.versionId, hash, job.detailOk ? 1 : 0, hasDescription(job), job.detailNote ?? null, ts, ts]);
     return 'new';
   }
 
@@ -122,6 +125,7 @@ export async function upsertJob(store, tenantSlug, job) {
        lat = ?, lng = ?, categories = ?, company_name = ?, apply_url = ?, version_id = ?,
        content_hash = ?, is_open = 1, closed_at = NULL,
        detail_ok = CASE WHEN ? = 1 THEN 1 ELSE detail_ok END,
+       has_description = CASE WHEN ? = 1 THEN 1 ELSE COALESCE(has_description, 0) END,
        detail_note = CASE WHEN ? = 1 THEN NULL ELSE ? END,
        last_seen = ?
      WHERE tenant_slug = ? AND job_id = ?`,
@@ -130,7 +134,7 @@ export async function upsertJob(store, tenantSlug, job) {
       job.remoteStatus, job.remoteStatusKey, job.salary, job.city, job.region, job.country,
       job.postalCode, job.streetAddress, job.lat, job.lng,
       job.categories ? JSON.stringify(job.categories) : null, job.companyName, job.applyUrl,
-      job.versionId, hash, job.detailOk ? 1 : 0,
+      job.versionId, hash, job.detailOk ? 1 : 0, hasDescription(job),
       job.detailOk ? 1 : 0, job.detailNote ?? null, ts, tenantSlug, jobId]);
   return 'updated';
 }
@@ -218,8 +222,12 @@ export async function stats(store) {
       'SELECT platform, COUNT(*) AS n FROM tenants WHERE live = 1 GROUP BY platform ORDER BY n DESC'),
     jobsOpen: await n('SELECT COUNT(*) AS n FROM jobs WHERE is_open = 1'),
     jobsClosed: await n('SELECT COUNT(*) AS n FROM jobs WHERE is_open = 0'),
+    // COALESCE so this is right both for rows carrying the flag and for older
+    // rows that only have the text -- and so it still works once the text is
+    // stripped for publication.
     withDescription: await n(
-      "SELECT COUNT(*) AS n FROM jobs WHERE is_open = 1 AND description_text IS NOT NULL AND description_text <> ''"),
+      `SELECT COUNT(*) AS n FROM jobs WHERE is_open = 1 AND COALESCE(has_description,
+         CASE WHEN description_text IS NOT NULL AND description_text <> '' THEN 1 ELSE 0 END) = 1`),
     remote: await n("SELECT COUNT(*) AS n FROM jobs WHERE is_open = 1 AND remote_key IS NOT NULL AND remote_key <> ''"),
     countries: await store.all(
       `SELECT country, COUNT(*) AS n FROM jobs WHERE is_open = 1 AND country IS NOT NULL

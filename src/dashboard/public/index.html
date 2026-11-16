@@ -108,6 +108,8 @@
   tbody tr:last-child td { border-bottom: 0; }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
   .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border); color: var(--text-secondary); }
+  .pill.stale { border-color: var(--critical); color: var(--critical); font-weight: 600; }
+  #staleness:empty { display: none; }
   .bad { color: var(--critical); }
   .ok { color: var(--good); }
   .empty { color: var(--text-muted); padding: 10px 0; }
@@ -129,6 +131,7 @@
     <div>
       <h1>Softgarden crawler</h1>
       <div class="sub" id="meta">loading…</div>
+      <div class="sub"><span class="pill" id="staleness"></span></div>
     </div>
     <div class="controls">
       <button id="toggle-table" aria-pressed="false">Table view</button>
@@ -452,13 +455,44 @@ function renderDataTables(d) {
   ], d.countries, 'No data.');
 }
 
+// The crawl runs weekly, so anything past one missed Monday is a fault and not
+// just age. 8 days rather than 7: a schedule GitHub delivers hours late is
+// still a successful week.
+const STALE_AFTER_DAYS = 8;
+
+/** How old the data is, measured between two server timestamps so that a
+ *  skewed clock on the viewer's machine can neither invent nor hide staleness. */
+function freshness(dataAsOf, generatedAt) {
+  if (!dataAsOf) {
+    return { label: 'no completed run on record', stale: true,
+      warning: '\u26a0 no run has ever completed' };
+  }
+  const ms = Math.max(0, Date.parse(generatedAt) - Date.parse(dataAsOf));
+  const days = Math.floor(ms / 86400000);
+  const hours = Math.floor(ms / 3600000);
+  const age = days >= 1 ? `${days} day${days === 1 ? '' : 's'} old`
+    : hours >= 1 ? `${hours} hour${hours === 1 ? '' : 's'} old`
+    : 'under an hour old';
+  return {
+    label: `data as of ${dataAsOf.replace('T', ' ').slice(0, 16)} UTC · ${age}`,
+    stale: days >= STALE_AFTER_DAYS,
+    // The line above already gives the age; the badge is only worth its space
+    // if it says what the age means -- that a scheduled run did not land.
+    warning: `\u26a0 the weekly run has not completed in ${days} days`,
+  };
+}
+
 async function load() {
   const res = await fetch('./api/summary');
   if (!res.ok) throw new Error(`summary failed: HTTP ${res.status}`);
   DATA = await res.json();
+  const fresh = freshness(DATA.dataAsOf, DATA.generatedAt);
   document.getElementById('meta').textContent =
     `${DATA.kpis.tenantsLive} live tenants · ${fmt(DATA.kpis.jobsOpen)} open jobs · `
-    + `storage: ${DATA.dialect} · generated ${DATA.generatedAt.replace('T', ' ').slice(0, 19)} UTC`;
+    + `storage: ${DATA.dialect} · ${fresh.label}`;
+  const mark = document.getElementById('staleness');
+  mark.textContent = fresh.stale ? fresh.warning : '';
+  mark.classList.toggle('stale', fresh.stale);
   tiles(DATA);
   renderCharts(DATA);
   renderTables(DATA);

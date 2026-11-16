@@ -21,7 +21,7 @@ const json = (res, body, status = 200) => {
 };
 
 /** Everything the dashboard draws, in one round trip. */
-async function summary(store) {
+export async function summary(store) {
   const s = await repo.stats(store);
   // Oldest-first for the run-history chart; stats returns newest-first.
   const runs = [...s.lastRuns].reverse().map((r) => ({
@@ -31,8 +31,20 @@ async function summary(store) {
     jobsNew: Number(r.jobs_new ?? 0), jobsUpdated: Number(r.jobs_updated ?? 0),
     jobsClosed: Number(r.jobs_closed ?? 0), detailsOk: Number(r.details_ok ?? 0),
   }));
+  // The newest run that both finished and succeeded is how old the data on the
+  // page actually is. `generatedAt` only says when the page was assembled, so
+  // showing that as the freshness makes a stale deploy -- or a missed schedule
+  // -- indistinguishable from a run that completed a minute ago.
+  // Queried rather than taken from lastRuns, which stops at 10: ten consecutive
+  // failures would otherwise report no successful run at all, which is a
+  // different and false claim from "the data is ten weeks old".
+  const lastOk = await store.get(
+    `SELECT finished_at FROM runs WHERE ok = 1 AND finished_at IS NOT NULL
+     ORDER BY id DESC LIMIT 1`);
+
   return {
     generatedAt: new Date().toISOString(),
+    dataAsOf: lastOk?.finished_at ?? null,
     dialect: store.dialect,
     kpis: {
       tenantsLive: s.tenantsLive, tenantsKnown: s.tenants, jobsOpen: s.jobsOpen,

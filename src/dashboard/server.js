@@ -20,17 +20,77 @@ const json = (res, body, status = 200) => {
   res.end(payload);
 };
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** The Monday that starts the UTC week containing `iso`. */
+function weekStartUTC(iso) {
+  const d = new Date(iso);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); // Monday = 0
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+/**
+ * Collapse run rows into one point per calendar week.
+ *
+ * A single weekly execution writes several rows -- a discover pass, then a
+ * crawl pass -- so charting rows directly makes one week look like two, and a
+ * manual re-run makes it look like three. Weeks are Monday-based to match the
+ * Monday schedule.
+ *
+ * Counts aggregate two different ways, because the columns mean two different
+ * things. New, updated and closed are events: each pass contributes its own,
+ * so they add. Listings seen and details fetched are levels describing how much
+ * of the catalogue a pass covered, so the week takes its largest pass --
+ * summing them would count the same listing twice whenever a week needed a
+ * second crawl. With one scheduled run per week, which is the normal case, the
+ * two rules agree and the rollup is exact.
+ */
+export function weeklyRuns(rows, limit = 12) {
+  const byWeek = new Map();
+  for (const r of rows) {
+    if (!r.started_at) continue;
+    const start = weekStartUTC(r.started_at);
+    const week = start.toISOString().slice(0, 10);
+    let w = byWeek.get(week);
+    if (!w) {
+      w = { week, label: `${start.getUTCDate()} ${MONTHS[start.getUTCMonth()]}`,
+        runs: 0, modes: [], startedAt: null, finishedAt: null, ok: true, pending: false,
+        tenantsLive: 0, jobsSeen: 0, jobsNew: 0, jobsUpdated: 0, jobsClosed: 0, detailsOk: 0 };
+      byWeek.set(week, w);
+    }
+    w.runs += 1;
+    if (r.mode && !w.modes.includes(r.mode)) w.modes.push(r.mode);
+    if (!w.startedAt || r.started_at < w.startedAt) w.startedAt = r.started_at;
+    if (r.finished_at && (!w.finishedAt || r.finished_at > w.finishedAt)) w.finishedAt = r.finished_at;
+    if (r.ok == null) w.pending = true;
+    else if (Number(r.ok) !== 1) w.ok = false;
+
+    w.tenantsLive = Math.max(w.tenantsLive, Number(r.tenants_live ?? 0));
+    w.jobsSeen = Math.max(w.jobsSeen, Number(r.jobs_seen ?? 0));
+    w.detailsOk = Math.max(w.detailsOk, Number(r.details_ok ?? 0));
+
+    w.jobsNew += Number(r.jobs_new ?? 0);
+    w.jobsUpdated += Number(r.jobs_updated ?? 0);
+    w.jobsClosed += Number(r.jobs_closed ?? 0);
+  }
+  // A week with a run still in flight has no verdict yet, the same as a row.
+  return [...byWeek.values()]
+    .map(({ pending, ok, ...w }) => ({ ...w, ok: pending ? null : ok }))
+    .sort((a, b) => (a.week < b.week ? -1 : 1))
+    .slice(-limit);
+}
+
 /** Everything the dashboard draws, in one round trip. */
 export async function summary(store) {
   const s = await repo.stats(store);
-  // Oldest-first for the run-history chart; stats returns newest-first.
-  const runs = [...s.lastRuns].reverse().map((r) => ({
-    id: Number(r.id), mode: r.mode, startedAt: r.started_at, finishedAt: r.finished_at,
-    ok: r.ok == null ? null : Number(r.ok) === 1,
-    tenantsLive: Number(r.tenants_live ?? 0), jobsSeen: Number(r.jobs_seen ?? 0),
-    jobsNew: Number(r.jobs_new ?? 0), jobsUpdated: Number(r.jobs_updated ?? 0),
-    jobsClosed: Number(r.jobs_closed ?? 0), detailsOk: Number(r.details_ok ?? 0),
-  }));
+  // Read wider than stats.lastRuns' ten rows: ten rows is only five weeks once
+  // each week contributes a discover pass and a crawl pass. Oldest week first,
+  // which is the order the history chart plots in.
+  const weeks = weeklyRuns(await store.all(
+    `SELECT mode, started_at, finished_at, ok, tenants_live, jobs_seen, jobs_new,
+       jobs_updated, jobs_closed, details_ok FROM runs ORDER BY id DESC LIMIT 200`));
   // The newest run that both finished and succeeded is how old the data on the
   // page actually is. `generatedAt` only says when the page was assembled, so
   // showing that as the freshness makes a stale deploy -- or a missed schedule
@@ -56,7 +116,7 @@ export async function summary(store) {
       slug: t.tenant_slug, company: t.company_name, platform: t.platform, jobs: Number(t.n),
     })),
     countries: s.countries.map((c) => ({ country: c.country, jobs: Number(c.n) })),
-    runs,
+    weeks,
     alerts: s.recentAlerts.map((a) => ({
       slug: a.tenant_slug, kind: a.kind, detail: a.detail, createdAt: a.created_at,
     })),
